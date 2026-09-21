@@ -4,6 +4,7 @@
 所有函数都只依赖 Surface 与普通数值，因此 app.py 与截图脚本可以复用同一套绘制代码。
 """
 
+import math
 import os
 
 import pygame
@@ -58,6 +59,116 @@ def draw_text(surface, text, pos, size=22, color=config.COLOR_TEXT, bold=False, 
 
 def text_width(text, size=22, bold=False):
     return get_font(size, bold).size(str(text))[0]
+
+
+def wrap_text(text, size=22, max_width=400, bold=False):
+    """把一段文字按像素宽度折行，返回行列表。
+
+    中文没有空格，所以逐字符累加——宽度超了就换行。
+    遇到换行符强制断行。
+    """
+    font = get_font(size, bold)
+    lines = []
+    for paragraph in str(text).split("\n"):
+        if not paragraph:
+            lines.append("")
+            continue
+        current = ""
+        for char in paragraph:
+            candidate = current + char
+            if current and font.size(candidate)[0] > max_width:
+                lines.append(current)
+                current = char
+            else:
+                current = candidate
+        lines.append(current)
+    return lines
+
+
+def draw_paragraph(surface, text, rect, size=18, color=config.COLOR_TEXT,
+                   line_gap=6, bold=False, align="left"):
+    """在 rect 内绘制一段自动折行的文字，返回实际占用的高度。
+
+    align 取 left / center。
+    """
+    lines = wrap_text(text, size=size, max_width=rect.width, bold=bold)
+    line_height = get_font(size, bold).get_linesize() + line_gap
+    y = rect.y
+    for line in lines:
+        if align == "center":
+            draw_text(surface, line, (rect.centerx, y), size=size, color=color,
+                      bold=bold, anchor="midtop")
+        else:
+            draw_text(surface, line, (rect.x, y), size=size, color=color,
+                      bold=bold, anchor="topleft")
+        y += line_height
+    return y - rect.y
+
+
+# ------------------------------------------------------------------ 图标
+def star_points(center, radius, inner_ratio=0.45):
+    """画一个五角星需要的顶点序列。"""
+    points = []
+    for index in range(10):
+        angle = -math.pi / 2 + index * math.pi / 5
+        length = radius if index % 2 == 0 else radius * inner_ratio
+        points.append((center[0] + math.cos(angle) * length,
+                       center[1] + math.sin(angle) * length))
+    return points
+
+
+def draw_star(surface, center, radius, color, filled=True):
+    """画一颗五角星；filled=False 时只画描边（表示未点亮的星）。"""
+    points = star_points(center, radius)
+    if filled:
+        pygame.draw.polygon(surface, color, points)
+    else:
+        pygame.draw.polygon(surface, color, points, 2)
+
+
+def draw_stars(surface, right_center, count, total=5, radius=7, gap=4, color=None):
+    """从右往左排一行星星，count 颗点亮，其余为空心。返回整行宽度。"""
+    color = color or config.COLOR_STAR
+    step = radius * 2 + gap
+    width = total * radius * 2 + (total - 1) * gap
+    x = right_center[0] - width + radius
+    for index in range(total):
+        filled = index < count
+        draw_star(surface, (x + index * step, right_center[1]), radius,
+                  color if filled else config.COLOR_STAR_EMPTY, filled=filled)
+    return width
+
+
+def draw_lock(surface, center, size, color=None):
+    """画一把挂锁（未解锁标记）。"""
+    color = color or config.COLOR_LOCK
+    body_w = size
+    body_h = size * 0.78
+    body = pygame.Rect(0, 0, body_w, body_h)
+    body.center = (center[0], center[1] + size * 0.18)
+    pygame.draw.rect(surface, color, body, border_radius=max(2, int(size * 0.16)))
+
+    # 锁梁：一个上半圆
+    shackle_w = size * 0.62
+    shackle = pygame.Rect(0, 0, shackle_w, size * 0.66)
+    shackle.midbottom = (center[0], body.top + 1)
+    pygame.draw.arc(surface, color, shackle, 0, math.pi, max(2, int(size * 0.15)))
+
+    # 锁孔
+    hole = max(2, int(size * 0.13))
+    pygame.draw.circle(surface, config.COLOR_CARD_LOCKED,
+                       (int(center[0]), int(body.centery - hole * 0.4)), hole)
+
+
+def draw_check(surface, center, size, color=None):
+    """画一个对勾（已通关标记）。"""
+    color = color or config.COLOR_SUCCESS
+    points = [
+        (center[0] - size * 0.42, center[1] + size * 0.02),
+        (center[0] - size * 0.10, center[1] + size * 0.34),
+        (center[0] + size * 0.44, center[1] - size * 0.34),
+    ]
+    pygame.draw.lines(surface, color, False, points, max(2, int(size * 0.20)))
 
 
 # ------------------------------------------------------------------ 基础图形
