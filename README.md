@@ -3,6 +3,9 @@
 一个用 **Python + Pygame** 编写的点击式箭头解谜小游戏。项目为软件工程课程第二次个人作业，
 参考微信小游戏《一箭又一箭》的核心玩法实现，开发过程使用 AIGC 工具辅助。
 
+> **作者**：周山翔　|　**仓库**：<https://github.com/zsx123456/one-arrow-after-another>
+> **博客（AIGC 使用记录 + 测试记录）**：[`docs/blog.md`](docs/blog.md)
+
 ---
 
 ## 一、游戏简介

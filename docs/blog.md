@@ -464,7 +464,7 @@ OK
 ## 九、如何运行
 
 ```bash
-git clone https://github.com/<你的用户名>/one-arrow-after-another.git
+git clone https://github.com/zsx123456/one-arrow-after-another.git
 cd one-arrow-after-another
 pip install -r requirements.txt
 python main.py
