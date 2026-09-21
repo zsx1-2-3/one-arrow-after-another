@@ -7,7 +7,7 @@
 用法：
     python tools/make_screenshots.py
 
-输出：assets/shot-01 ~ shot-10.png
+输出：assets/shot-01 ~ shot-11.png
 
 注意：脚本用**临时目录里的存档**，不会动你自己那份 progress.json。
 """
@@ -147,10 +147,10 @@ def main():
     game.draw()
     save(screen, "shot-08-win.png")
 
-    # -------- 9. 失败界面：把失误次数故意用完 --------
+    # -------- 9. 失败界面：把生命值故意用光 --------
     game.start_level(HOVER)
     target = find_blocked(game.board)
-    for _ in range(game.board.max_mistakes):
+    for _ in range(game.board.max_hp):
         game.click_cell(target.row, target.col)
         settle(game, 0.5)
     settle(game, config.RESULT_DELAY + 0.3)
@@ -166,7 +166,7 @@ def main():
     game.draw()
     save(screen, "shot-10-all-clear.png")
 
-    # -------- 11. 最难的一关：10×10 棋盘 + 悬停显示被挡住的路径 --------
+    # -------- 11. 最难的一关：9×9 棋盘塞满 50 支箭头，悬停显示被挡住的路径 --------
     game.start_level(TOTAL_LEVELS - 1)
     target = find_blocked(game.board)
     hover(game, target.row, target.col)

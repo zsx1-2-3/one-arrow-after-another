@@ -37,18 +37,19 @@ def main():
     report = validate_levels()
 
     if args.markdown:
-        print("| 关卡 | 名称 | 棋盘 | 箭头数 | 开局可点 | 失误上限 | 难度 | 是否可解 |")
-        print("| --- | --- | --- | --- | --- | --- | --- | --- |")
+        print("| 关卡 | 名称 | 棋盘 | 箭头数 | 密度 | 开局可点 | 生命值 | 难度 | 是否可解 |")
+        print("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
         for item in report:
             print(
-                "| 第%d关 | %s | %s | %d | %d | %d | %s | %s |"
+                "| 第%d关 | %s | %s | %d | %.2f | %d | %d | %s | %s |"
                 % (
                     item["index"],
                     item["name"],
                     item["size"],
                     item["arrows"],
+                    item["density"],
                     item["free"],
-                    item["max_mistakes"],
+                    item["max_hp"],
                     "★" * item["stars"],
                     "是" if item["solvable"] else "**否**",
                 )
@@ -60,10 +61,10 @@ def main():
         for level, item in zip(LEVELS, report):
             print()
             tag = "（教学关）" if item["tutorial"] else ""
-            print("第 %2d 关  %s%s   棋盘 %s   箭头 %2d 支   开局可点 %d 支   "
-                  "失误上限 %d   难度 %s"
+            print("第 %2d 关  %s%s   棋盘 %s   箭头 %2d 支   密度 %.2f   开局可点 %d 支   "
+                  "生命值 %d   难度 %s"
                   % (item["index"], level.name, tag, item["size"], item["arrows"],
-                     item["free"], item["max_mistakes"], "★" * item["stars"]))
+                     item["density"], item["free"], item["max_hp"], "★" * item["stars"]))
             print("-" * 78)
             for row, line in enumerate(level.layout):
                 print("   %d | %s" % (row, " ".join(line)))
@@ -81,7 +82,9 @@ def main():
         return 1
     print("校验结果：全部 %d 个关卡均可正常通关。" % len(report))
     if not args.markdown:
-        print("难度参考：开局可点的箭头越少、棋盘越大，需要扫视的线条就越多，难度越高。")
+        print("难度参考：棋盘尺寸到第 9 关就封顶，之后靠密度继续加难——")
+        print("          同样的格子里箭头越多，需要逐条扫视的射线就越多；")
+        print("          开局可点的箭头越少，越要在开局仔细找出口。")
     return 0
 
 
