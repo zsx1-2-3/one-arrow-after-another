@@ -14,15 +14,16 @@ import math
 
 import pygame
 
-from . import anim, config, ui
+from . import anim, bgfx, config, ui
 from .board import (CLICK_BLOCKED, CLICK_EMPTY, CLICK_FLY, STATE_CLEARED,
                     STATE_FAILED, STATE_PLAYING, Board)
 from .levels import TOTAL_LEVELS, LEVELS
 from .progress import Progress
 
-SCENE_MENU = "menu"
-SCENE_LEVELS = "levels"
-SCENE_PLAY = "play"
+# 场景常量定义在 config 里（背景模块也要用，避免循环依赖），这里只是转发一下
+SCENE_MENU = config.SCENE_MENU
+SCENE_LEVELS = config.SCENE_LEVELS
+SCENE_PLAY = config.SCENE_PLAY
 
 OVERLAY_WIN = "win"
 OVERLAY_FAIL = "fail"
@@ -65,6 +66,7 @@ class Game:
         self.overlay_timer = 0.0
         self.mouse_pos = (-1, -1)
         self.hover_cell = None
+        self._light_layer = None        # 棋盘柔光的缓存贴图（面板尺寸变化时重建）
 
         # 教学关引导
         self.tutorial_index = 0
@@ -78,9 +80,8 @@ class Game:
 
         self.time = 0.0
 
-        self.background = ui.make_vertical_gradient(
-            (self.width, self.height), config.COLOR_BG_TOP, config.COLOR_BG_BOTTOM
-        )
+        # 动态背景：漂移光晕 + 星点 + 偶发流星，按场景切换浓淡（见 bgfx.py）
+        self.bg = bgfx.Background((self.width, self.height), SCENE_MENU)
         self.enter_menu()
 
     # ================================================================ 场景
@@ -114,6 +115,8 @@ class Game:
         # 免得「先通关第 N 关吧」这种提示跟着玩家进了关卡
         self.toast_text = ""
         self.toast_timer = 0.0
+        # 背景跟着换浓淡：游戏界面要收敛，别和棋盘抢注意力
+        self.bg.set_scene(self.scene)
 
     def enter_menu(self):
         """回到开始界面。"""
@@ -489,6 +492,7 @@ class Game:
     # ================================================================ 更新
     def update(self, dt):
         self.time += dt
+        self.bg.update(dt)
         for effect in list(self.animations):
             if effect.update(dt):
                 self.animations.remove(effect)
@@ -520,7 +524,7 @@ class Game:
 
     # ================================================================ 渲染
     def draw(self):
-        self.screen.blit(self.background, (0, 0))
+        self.bg.draw(self.screen)
         if self.scene == SCENE_MENU:
             self.draw_menu()
         elif self.scene == SCENE_LEVELS:
@@ -731,23 +735,36 @@ class Game:
     def draw_board(self):
         rows, cols = self.board.rows, self.board.cols
 
+        # 棋盘底衬：整块圆角面板 + 面板内缓慢游动的柔光。
+        # 原来只有一圈外框，棋盘区域是一片死板的深色，关卡里看着很单调。
+        panel = self.board_rect.inflate(28, 28)
+        ui.draw_round_rect(self.screen, panel, config.COLOR_BOARD_PANEL, radius=20)
+        self.draw_board_light(panel)
+
         # 悬停时高亮该箭头的前进路径：绿色=畅通，红色=被挡
         path_cells = set()
+        path_centers = []
         blocker_cell = None
-        path_color = config.COLOR_SUCCESS
+        path_color = config.COLOR_PATH_OK
         if (self.hover_cell is not None and self.board.state == STATE_PLAYING
                 and self.board.arrow_at(*self.hover_cell) is not None):
             path = self.board.path_cells(*self.hover_cell)
             blocker = self.board.find_blocker(*self.hover_cell)
             if blocker is not None:
-                path_color = config.COLOR_DANGER
+                path_color = config.COLOR_PATH_BLOCK
                 blocker_cell = (blocker.row, blocker.col)
                 # 只高亮到挡路的那个箭头为止，挡路之后的路段没有意义
                 path = path[:path.index(blocker_cell) + 1]
             path_cells = set(path)
+            # 流光要沿着整条路径跑，所以带上起点（箭头自己所在的格子）
+            path_centers = [self.cell_rect(*self.hover_cell).center]
+            path_centers += [self.cell_rect(r, c).center for r, c in path]
+            if blocker_cell is not None:
+                path_centers.append(self.cell_rect(*blocker_cell).center)
 
         step = self.current_step
         pulse = self.tutorial_pulse()
+        hover_pulse = 0.5 + 0.5 * math.sin(self.time * 5.2)
 
         for row in range(rows):
             for col in range(cols):
@@ -759,10 +776,17 @@ class Game:
                 if (row, col) in path_cells:
                     ui.draw_round_rect_alpha(self.screen, rect, path_color, 48,
                                              radius=config.CELL_RADIUS)
-                # 教学关目标格子的底色：画在箭头下面，免得把箭头压暗
+                # 教学关目标格子：用加法柔光提亮，而不是叠一层黄色底。
+                # 叠底色会把下面那支箭头染成一片发闷的橄榄色（试过，很难看），
+                # 加法光只是"打亮"这一格，箭头的颜色还是它自己的。
+                # 光晕裁到格子范围内，否则会溢到相邻格子上、
+                # 而且行优先绘制会让相邻格把它盖掉一半，出现半明半暗的怪相。
                 if step is not None and (row, col) == (step.row, step.col):
-                    ui.draw_round_rect_alpha(self.screen, rect, config.COLOR_TUTORIAL,
-                                             int(28 + pulse * 40), radius=config.CELL_RADIUS)
+                    clip_backup = self.screen.get_clip()
+                    self.screen.set_clip(rect)
+                    ui.draw_glow(self.screen, rect.center, int(rect.width * 0.78),
+                                 (168, 122, 34), 0.30 + 0.34 * pulse, falloff=2.0)
+                    self.screen.set_clip(clip_backup)
 
                 edge = config.COLOR_CELL_EDGE
                 if step is not None and (row, col) == (step.row, step.col):
@@ -770,20 +794,96 @@ class Game:
                 elif (row, col) == blocker_cell:
                     edge = config.COLOR_DANGER
                 elif arrow is not None and self.hover_cell == (row, col):
-                    edge = config.COLOR_ACCENT
+                    # 悬停格的边框跟着呼吸，鼠标停哪儿一眼就能看到
+                    edge = ui.mix_color(config.COLOR_CELL_EDGE, config.COLOR_HOVER_RING,
+                                        0.55 + 0.45 * hover_pulse)
                 pygame.draw.rect(self.screen, edge, rect, 2, border_radius=config.CELL_RADIUS)
 
                 if arrow is not None:
-                    ui.draw_arrow(self.screen, rect.center,
-                                  rect.width * config.ARROW_RATIO, arrow.direction)
+                    side = rect.width * config.ARROW_RATIO
+                    if self.hover_cell == (row, col):
+                        side *= 1.0 + 0.06 * hover_pulse     # 悬停时轻轻放大一点
+                    # 同向箭头按格子坐标取不同明暗变体，避免成片同色糊成一块
+                    ui.draw_arrow(self.screen, rect.center, side, arrow.direction,
+                                  variant=ui.arrow_variant(row, col))
+
+        # 悬停路径上的流光：一颗亮点从箭头出发跑到被挡处，循环播放
+        if len(path_centers) > 1:
+            self.draw_path_flow(path_centers, path_color)
 
         # 棋盘外框
-        pygame.draw.rect(self.screen, config.COLOR_CELL_EDGE,
-                         self.board_rect.inflate(16, 16), 2, border_radius=16)
+        pygame.draw.rect(self.screen, config.COLOR_BOARD_PANEL_EDGE,
+                         panel, 2, border_radius=20)
 
         # 教学关：给当前该点的箭头套一圈会呼吸的高亮环（画在最上层）
         if step is not None:
             self.draw_tutorial_ring(self.cell_rect(step.row, step.col), pulse)
+
+    # ---------------------------------------------------------------- 棋盘动效
+    def board_light_layer(self, panel):
+        """把「棋盘柔光」烘在一张比面板更大的画布上并缓存。
+
+        画布做得比面板大一圈（四周各留 drift），这样光晕在面板内漂移时
+        画布不会露边；真正绘制时用 set_clip 裁到面板范围，光不会溢出到棋盘外。
+        """
+        drift = self.board_light_drift(panel)
+        size = (panel.width + drift * 2, panel.height + drift * 2)
+        cached = self._light_layer
+        if cached is not None and cached[0] == size:
+            return cached[1]
+
+        layer = pygame.Surface(size, pygame.SRCALPHA)
+        ui.draw_glow(layer, (size[0] // 2, size[1] // 2),
+                     int(min(panel.width, panel.height) * 0.52),
+                     (36, 56, 104), 1.0, falloff=2.3)
+        self._light_layer = (size, layer)
+        return layer
+
+    def board_light_drift(self, panel):
+        """柔光在面板内可以漂移的最大距离。"""
+        return int(min(panel.width, panel.height) * 0.13)
+
+    def draw_board_light(self, panel):
+        """棋盘面板里缓慢游动的一团柔光。
+
+        纯粹的观感件：让"棋盘是活的"，又几乎不干扰判读——
+        亮度压得很低，位置用两条不同周期的正弦合成，看不出规律。
+        """
+        layer = self.board_light_layer(panel)
+        drift = self.board_light_drift(panel)
+        t = self.time * 0.20
+        offset_x = math.sin(t * 1.0) * drift
+        offset_y = math.sin(t * 0.68 + 1.7) * drift
+        position = (panel.x + drift - offset_x, panel.y + drift - offset_y)
+
+        clip_backup = self.screen.get_clip()
+        self.screen.set_clip(panel)
+        self.screen.blit(layer, position, special_flags=pygame.BLEND_RGB_ADD)
+        self.screen.set_clip(clip_backup)
+
+    def draw_path_flow(self, centers, color):
+        """沿悬停路径跑动的流光，让「能不能飞」这条信息动起来。"""
+        segments = []
+        total = 0.0
+        for start, end in zip(centers, centers[1:]):
+            length = math.hypot(end[0] - start[0], end[1] - start[1])
+            if length <= 0:
+                continue
+            segments.append((start, end, length))
+            total += length
+        if total <= 0:
+            return
+
+        travel = (self.time * 1.5) % 1.0 * total
+        position = centers[-1]
+        for start, end, length in segments:
+            if travel <= length:
+                ratio = travel / length
+                position = (start[0] + (end[0] - start[0]) * ratio,
+                            start[1] + (end[1] - start[1]) * ratio)
+                break
+            travel -= length
+        ui.draw_glow(self.screen, position, 24, color, 0.75, falloff=1.7)
 
     def tutorial_pulse(self):
         """0~1 的呼吸系数，用于教学关高亮的闪烁节奏。"""
@@ -812,7 +912,8 @@ class Game:
                      (bar.right - 18, bar.centery), size=15,
                      color=config.COLOR_TUTORIAL, bold=True, anchor="midright")
 
-        text_area = pygame.Rect(bar.x + 18, bar.y + 10, bar.width - 150, bar.height - 20)
+        # 右侧要留出「教学 x / y」的位置，左边留一点内边距
+        text_area = pygame.Rect(bar.x + 18, bar.y + 10, bar.width - 118, bar.height - 20)
         ui.draw_paragraph(self.screen, step.text, text_area, size=15,
                           color=config.COLOR_TEXT, line_gap=2)
 

@@ -61,11 +61,19 @@ def text_width(text, size=22, bold=False):
     return get_font(size, bold).size(str(text))[0]
 
 
+# 不允许出现在行首的标点（中文排版的基本规则）。
+# 逐字折行时很容易把句号、右括号甩到下一行，读起来像多了一行残缺的字。
+_NO_LINE_START = "。，、；：！？）】》」』”’%…·"
+
+
 def wrap_text(text, size=22, max_width=400, bold=False):
     """把一段文字按像素宽度折行，返回行列表。
 
     中文没有空格，所以逐字符累加——宽度超了就换行。
     遇到换行符强制断行。
+
+    折完再做一遍「标点不下行」修正：若某行以收尾标点开头，
+    就把上一行的最后一个字一起挪下来。这样句号不会孤零零占一行。
     """
     font = get_font(size, bold)
     lines = []
@@ -82,6 +90,14 @@ def wrap_text(text, size=22, max_width=400, bold=False):
             else:
                 current = candidate
         lines.append(current)
+
+    # 标点不下行：把行首的收尾标点连同上一行的末字一起挪到下一行
+    for index in range(1, len(lines)):
+        line = lines[index]
+        while line and line[0] in _NO_LINE_START and lines[index - 1]:
+            line = lines[index - 1][-1] + line
+            lines[index - 1] = lines[index - 1][:-1]
+        lines[index] = line
     return lines
 
 
@@ -286,21 +302,66 @@ def _arrow_shape(surface, center, side, color):
 
 
 def _build_arrow(side, color, direction):
-    """生成某种颜色/方向的箭头贴图：先画朝右的，再整体旋转。"""
+    """生成某种颜色/方向的箭头贴图。
+
+    做法：先用白色画一个「朝右」的箭头当遮罩，旋转到目标方向，
+    再乘上一层竖直渐变（上亮下暗），得到有光泽的立体箭头。
+    渐变在**旋转之后**再乘，这样四个方向的受光方向一致（都从上方来），
+    不会出现「朝上的箭头变成左边亮」这种别扭的光照。
+    """
     pad = max(3, int(side * 0.14))
     size = int(side) + pad * 2
-    surface = pygame.Surface((size, size), pygame.SRCALPHA)
+
+    # 1) 白色箭头遮罩
+    shape = pygame.Surface((size, size), pygame.SRCALPHA)
     center = (size / 2.0, size / 2.0)
-    shadow = tuple(max(0, int(value * 0.5)) for value in color)
+    _arrow_shape(shape, center, side, (255, 255, 255))
 
-    # 先画一层深色描边/阴影，让箭头有立体感
-    _arrow_shape(surface, (center[0] + 1.5, center[1] + 2.5), side, shadow)
-    _arrow_shape(surface, center, side, color)
-
+    # 2) 旋转到目标方向（90 的整数倍，贴图尺寸不变）
     angle = {"right": 0, "up": 90, "left": 180, "down": -90}[direction]
     if angle:
-        surface = pygame.transform.rotate(surface, angle)
+        shape = pygame.transform.rotate(shape, angle)
+
+    # 3) 乘上竖直渐变：顶部提亮、底部压暗
+    top = mix_color(color, (255, 255, 255), config.ARROW_HIGHLIGHT)
+    bottom = mix_color(color, (0, 0, 0), config.ARROW_SHADE)
+    gradient = pygame.Surface((size, size), pygame.SRCALPHA)
+    for y in range(size):
+        ratio = y / max(1, size - 1)
+        gradient.fill(tuple(int(a + (b - a) * ratio) for a, b in zip(top, bottom)) + (255,),
+                      pygame.Rect(0, y, size, 1))
+
+    arrow = shape.copy()
+    arrow.blit(gradient, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+
+    # 4) 深色投影垫在下面，让箭头从格子上"浮"起来
+    shadow = shape.copy()
+    shadow.fill(tuple(max(0, int(value * 0.42)) for value in color) + (255,),
+                special_flags=pygame.BLEND_RGBA_MULT)
+
+    surface = pygame.Surface((size, size), pygame.SRCALPHA)
+    surface.blit(shadow, (2, 3))
+    surface.blit(arrow, (0, 0))
     return surface
+
+
+def arrow_variant(row, col):
+    """按格子坐标给箭头挑一个明暗变体（0 ~ DIR_VARIANTS-1）。
+
+    生成器造出的关卡里同向箭头常常成片相邻，全用一个颜色会糊成色块。
+    这里用 (行×3 + 列×5) % 4：3 与 5 都和 4 互质，所以**上下左右相邻的两个格子
+    必定落在不同变体上**，色块被打散；变体只改明暗不改色相，方向依然一眼可辨。
+    变体和「这支箭头现在能不能点」无关，不会泄露解法。
+    """
+    return (row * 3 + col * 5) % config.DIR_VARIANTS
+
+
+def arrow_color(direction, variant=0):
+    """取某个方向、某个变体对应的颜色。"""
+    palette = config.DIR_PALETTES.get(direction)
+    if not palette:
+        return config.DIR_COLORS[direction]
+    return palette[variant % len(palette)]
 
 
 def arrow_surface(side, color, direction):
@@ -312,10 +373,13 @@ def arrow_surface(side, color, direction):
     return cached
 
 
-def draw_arrow(surface, center, side, direction, color=None, alpha=255):
-    """在 center（屏幕坐标）处画一个箭头。"""
+def draw_arrow(surface, center, side, direction, color=None, alpha=255, variant=0):
+    """在 center（屏幕坐标）处画一个箭头。
+
+    color 传 None 时按「方向 + 变体」自动取色（变体用来打散同色箭头）。
+    """
     if color is None:
-        color = config.DIR_COLORS[direction]
+        color = arrow_color(direction, variant)
     image = arrow_surface(side, color, direction)
     if alpha < 255:
         image = image.copy()
@@ -327,6 +391,76 @@ def mix_color(color_a, color_b, ratio):
     """按比例混合两种颜色，ratio=0 取 color_a，ratio=1 取 color_b。"""
     ratio = max(0.0, min(1.0, ratio))
     return tuple(int(a + (b - a) * ratio) for a, b in zip(color_a, color_b))
+
+
+def lighten(color, ratio):
+    """往白色方向提亮。"""
+    return mix_color(color, (255, 255, 255), ratio)
+
+
+def darken(color, ratio):
+    """往黑色方向压暗。"""
+    return mix_color(color, (0, 0, 0), ratio)
+
+
+# ------------------------------------------------------------------ 光晕
+_glow_cache = {}
+
+
+def clear_caches():
+    """清空字体 / 箭头 / 光晕贴图的缓存。
+
+    什么时候需要它：pygame.quit() 之后又重新 init 的场景（比如测试里一个用例组
+    退出 pygame、下一个用例组还要画图）。缓存里的 Font 与 Surface 在 quit 时
+    已经被释放，再拿去渲染不会抛异常，而是直接段错误——排查起来很费劲，
+    所以重新初始化之后先把缓存清干净。
+    """
+    _font_cache.clear()
+    _arrow_cache.clear()
+    _glow_cache.clear()
+
+
+def glow_surface(radius, color, falloff=2.0, brightness=1.0):
+    """预渲染一张径向渐变的光晕贴图（中心最亮、边缘全黑）。
+
+    贴图用 BLEND_RGB_ADD 叠加，所以亮度直接烘进 RGB 里——
+    好处是动画每帧只需要一次 blit，不用再复制/调 alpha，也就不会有每帧的内存分配。
+    亮度按档位量化后缓存，避免呼吸动画把缓存撑爆。
+    """
+    key = (int(radius), tuple(color), round(falloff, 2), round(brightness, 2))
+    cached = _glow_cache.get(key)
+    if cached is not None:
+        return cached
+
+    radius = max(1, int(radius))
+    size = radius * 2
+    surface = pygame.Surface((size, size), pygame.SRCALPHA)
+    steps = max(12, radius)
+    for step in range(steps, 0, -1):
+        ratio = step / float(steps)                  # 1 -> 0（外 -> 内）
+        factor = max(0.0, 1.0 - ratio) ** falloff * brightness
+        if factor <= 0.004:
+            continue
+        color_now = tuple(min(255, int(value * factor)) for value in color)
+        pygame.draw.circle(surface, color_now + (255,), (radius, radius), int(radius * ratio))
+
+    _glow_cache[key] = surface
+    return surface
+
+
+def draw_glow(surface, center, radius, color, intensity=1.0, falloff=2.0, levels=6):
+    """在 center 处叠加一团光晕（加法混合）。
+
+    intensity 0~1 控制明暗，内部量化成 levels 档再取缓存贴图，
+    因此呼吸 / 淡入淡出这类动画不会产生额外开销。
+    """
+    intensity = max(0.0, min(1.0, intensity))
+    if intensity <= 0.0:
+        return
+    level = max(1, int(round(intensity * levels)))
+    image = glow_surface(radius, color, falloff, level / float(levels))
+    surface.blit(image, image.get_rect(center=(int(center[0]), int(center[1]))),
+                 special_flags=pygame.BLEND_RGB_ADD)
 
 
 # ------------------------------------------------------------------ 按钮
