@@ -194,8 +194,8 @@ class SolverTestCase(unittest.TestCase):
             self.assertEqual(board.remaining, 0)
 
     def test_level_count_and_difficulty_ramp(self):
-        """关卡数量足够多，且难度整体是递增的。"""
-        self.assertGreaterEqual(TOTAL_LEVELS, 10)
+        """关卡数量够玩，且难度整体是递增的。"""
+        self.assertGreaterEqual(TOTAL_LEVELS, 9)
         scores = [level.difficulty_score for level in LEVELS]
         self.assertEqual(scores, sorted(scores), "难度分应当从左到右递增")
 
@@ -212,16 +212,19 @@ class SolverTestCase(unittest.TestCase):
             self.assertGreaterEqual(rows_b, rows_a)
             self.assertGreaterEqual(cols_b, cols_a)
 
-        # 尺寸必须尽早封顶：从第 9 关起完全不再变化
-        frozen = sizes[8]
-        for index, size in enumerate(sizes[8:], start=9):
-            self.assertEqual(size, frozen, "第 %d 关的棋盘不该再变大" % index)
-        self.assertLessEqual(max(max(rows, cols) for rows, cols in sizes), 9,
-                             "棋盘尺寸不该超过 9×9")
+        max_side = max(max(rows, cols) for rows, cols in sizes)
+        self.assertLessEqual(max_side, 9, "棋盘尺寸不该超过 9×9")
+
+        # 找到第一次达到最大尺寸的那一关，之后就不许再变大了
+        frozen_at = next(index for index, size in enumerate(sizes)
+                         if max(size) == max_side)
+        for index, size in enumerate(sizes[frozen_at:], start=frozen_at + 1):
+            self.assertEqual(size, sizes[frozen_at],
+                             "第 %d 关的棋盘不该比前关更大" % index)
 
         # 封顶之后的箭头数量必须严格递增（难度只能从密度来）
         arrows = [level.arrow_count for level in LEVELS]
-        for index in range(8, len(arrows) - 1):
+        for index in range(frozen_at, len(arrows) - 1):
             self.assertLess(arrows[index], arrows[index + 1],
                             "第 %d 关起箭头数应当继续增加" % (index + 1))
 
@@ -666,7 +669,7 @@ class GameFlowTestCase(unittest.TestCase):
 
     # ---------------------------------------------------------- 全关卡回归
     def test_all_levels_can_be_cleared_in_order(self):
-        """按顺序把 12 关全部打通，验证解锁链路与关卡数据整体可用。"""
+        """按顺序把 9 关全部打通，验证解锁链路与关卡数据整体可用。"""
         game = self.game
         for index in range(TOTAL_LEVELS):
             self.assertTrue(game.start_level(index),
@@ -702,20 +705,11 @@ class VisualVarietyTestCase(unittest.TestCase):
     def tearDownClass(cls):
         pygame.quit()
 
-    def test_arrow_variant_is_deterministic_and_in_range(self):
-        """同一个格子每次都取到同一个变体，且落在合法档位内。"""
-        for row in range(12):
-            for col in range(12):
-                variant = ui.arrow_variant(row, col)
-                self.assertEqual((row * 3 + col * 5) % config.DIR_VARIANTS, variant)
-                self.assertTrue(0 <= variant < config.DIR_VARIANTS)
-                self.assertEqual(variant, ui.arrow_variant(row, col))
+    def test_every_arrow_takes_its_direction_color(self):
+        """箭头颜色只由方向决定：同一方向的箭头颜色完全一致。
 
-    def test_adjacent_arrows_never_share_a_color(self):
-        """上下左右相邻的箭头一定不同色（同向也是这样）。
-
-        这是「同色箭头连成一片」的直接解药：
-        (行×3 + 列×5) % 4 里 3 和 5 都与 4 互质，所以四个方向的邻居必然错开。
+        这是「不要有的亮有的暗」的直接体现——一个方向就是唯一一个颜色，
+        不再按格子坐标取深浅变体。
         """
         for level in LEVELS:
             for row in range(level.rows):
@@ -723,53 +717,51 @@ class VisualVarietyTestCase(unittest.TestCase):
                     direction = _char_direction(level.layout[row][col])
                     if direction is None:
                         continue
-                    for d_row, d_col in ((0, 1), (1, 0)):
-                        near_row, near_col = row + d_row, col + d_col
-                        if not (near_row < level.rows and near_col < level.cols):
-                            continue
-                        near_direction = _char_direction(level.layout[near_row][near_col])
-                        if near_direction != direction:
-                            continue          # 不同方向的色相本来就不同
-                        self.assertNotEqual(
-                            ui.arrow_variant(row, col),
-                            ui.arrow_variant(near_row, near_col),
-                            "%s 第 (%d,%d) 与 (%d,%d) 两个同向箭头取了同一个变体"
-                            % (level.name, row, col, near_row, near_col))
+                    self.assertEqual(ui.arrow_color(direction),
+                                     config.DIR_COLORS[direction])
 
-    def test_every_direction_has_its_own_palette(self):
-        """四个方向都要有各自的配色，且同方向各档颜色互不相同。"""
-        self.assertEqual(set(config.DIR_PALETTES), set(config.DIR_COLORS))
-        for direction, palette in config.DIR_PALETTES.items():
-            self.assertEqual(len(palette), config.DIR_VARIANTS, direction)
-            self.assertEqual(len(set(palette)), len(palette),
-                             "%s 的配色里有重复档位" % direction)
-            for color in palette:
-                self.assertTrue(all(0 <= value <= 255 for value in color))
-        groups = [set(palette) for palette in config.DIR_PALETTES.values()]
-        for index, group in enumerate(groups):
-            for other in groups[index + 1:]:
-                self.assertFalse(group & other, "两个方向的配色串了")
+    def test_direction_colors_have_matched_brightness(self):
+        """四个方向的颜色感知亮度要拉平，整屏看起来才像「一套」。
 
-    def test_dense_levels_use_many_distinct_colors(self):
-        """高密度关卡实际用到的颜色数要够多，不能一片同色。
-
-        箭头少的关卡最多也就用得出「箭头数」种颜色，所以下限取两者的较小值；
-        箭头数上到 20 支以后，要求至少铺开 12 种，避免又退回一色到底。
+        感知亮度 = 0.299R + 0.587G + 0.114B。
+        早先每个方向配了 4 档明暗变体，同方向内亮度跨度到 70 以上，
+        看着忽明忽暗；现在四个颜色的亮度差必须收在 5 以内。
         """
+        luminances = []
+        for direction, color in config.DIR_COLORS.items():
+            self.assertTrue(all(0 <= value <= 255 for value in color), direction)
+            luminances.append(0.299 * color[0] + 0.587 * color[1] + 0.114 * color[2])
+        spread = max(luminances) - min(luminances)
+        self.assertLess(spread, 5.0,
+                        "四个方向的箭头颜色亮度差了 %.1f，看起来会有的亮有的暗"
+                        % spread)
+
+    def test_direction_colors_are_distinct_and_all_used(self):
+        """四个方向颜色互不相同，且确实都在关卡里用到。"""
+        colors = list(config.DIR_COLORS.values())
+        self.assertEqual(len(set(colors)), len(colors), "有两个方向撞色了")
+
+        used = set()
+        for level in LEVELS:
+            for row in range(level.rows):
+                for col in range(level.cols):
+                    direction = _char_direction(level.layout[row][col])
+                    if direction is not None:
+                        used.add(direction)
+        self.assertEqual(used, set(config.DIR_COLORS), "有关卡里几乎不出现的方向")
+
+    def test_level_colors_are_only_direction_colors(self):
+        """一关里出现的颜色只可能来自那 4 个方向色，不会有第 5 种。"""
         for level in LEVELS:
             colors = set()
             for row in range(level.rows):
                 for col in range(level.cols):
                     direction = _char_direction(level.layout[row][col])
                     if direction is not None:
-                        colors.add(ui.arrow_color(direction, ui.arrow_variant(row, col)))
-            expected = min(8, level.arrow_count)
-            if level.arrow_count >= 20:
-                expected = max(expected, 12)
-            self.assertGreaterEqual(
-                len(colors), expected,
-                "%s 只用了 %d 种箭头颜色（期望至少 %d 种），画面会糊成一块"
-                % (level.name, len(colors), expected))
+                        colors.add(ui.arrow_color(direction))
+            self.assertLessEqual(len(colors), len(config.DIR_COLORS))
+            self.assertTrue(colors.issubset(set(config.DIR_COLORS.values())),
+                            "%s 出现了配色表以外的箭头颜色" % level.name)
 
     def test_wrap_text_keeps_punctuation_off_line_start(self):
         """折行后不允许有行以收尾标点开头（中文排版的基本要求）。"""

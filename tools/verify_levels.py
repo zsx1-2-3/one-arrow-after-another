@@ -60,7 +60,8 @@ def main():
         print("=" * 78)
         for level, item in zip(LEVELS, report):
             print()
-            tag = "（教学关）" if item["tutorial"] else ""
+            # 关卡名本身就叫「教学关」时不再重复标注，免得印成「教学关（教学关）」
+            tag = "（教学关）" if item["tutorial"] and level.name != "教学关" else ""
             print("第 %2d 关  %s%s   棋盘 %s   箭头 %2d 支   密度 %.2f   开局可点 %d 支   "
                   "生命值 %d   难度 %s"
                   % (item["index"], level.name, tag, item["size"], item["arrows"],
@@ -82,7 +83,7 @@ def main():
         return 1
     print("校验结果：全部 %d 个关卡均可正常通关。" % len(report))
     if not args.markdown:
-        print("难度参考：棋盘尺寸到第 9 关就封顶，之后靠密度继续加难——")
+        print("难度参考：棋盘尺寸到第 8 关就封顶在 9×9，之后靠密度继续加难——")
         print("          同样的格子里箭头越多，需要逐条扫视的射线就越多；")
         print("          开局可点的箭头越少，越要在开局仔细找出口。")
     return 0
