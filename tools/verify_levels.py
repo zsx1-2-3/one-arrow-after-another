@@ -37,11 +37,11 @@ def main():
     report = validate_levels()
 
     if args.markdown:
-        print("| 关卡 | 名称 | 棋盘 | 箭头数 | 开局可点 | 失误上限 | 是否可解 |")
-        print("| --- | --- | --- | --- | --- | --- | --- |")
+        print("| 关卡 | 名称 | 棋盘 | 箭头数 | 开局可点 | 失误上限 | 难度 | 是否可解 |")
+        print("| --- | --- | --- | --- | --- | --- | --- | --- |")
         for item in report:
             print(
-                "| 第%d关 | %s | %s | %d | %d | %d | %s |"
+                "| 第%d关 | %s | %s | %d | %d | %d | %s | %s |"
                 % (
                     item["index"],
                     item["name"],
@@ -49,23 +49,25 @@ def main():
                     item["arrows"],
                     item["free"],
                     item["max_mistakes"],
+                    "★" * item["stars"],
                     "是" if item["solvable"] else "**否**",
                 )
             )
     else:
-        print("=" * 68)
+        print("=" * 78)
         print("《一箭又一箭》关卡校验报告")
-        print("=" * 68)
+        print("=" * 78)
         for level, item in zip(LEVELS, report):
             print()
-            print("第 %d 关  %s   棋盘 %s   箭头 %d 支   开局可点 %d 支   失误上限 %d"
-                  % (item["index"], level.name, item["size"], item["arrows"],
-                     item["free"], item["max_mistakes"]))
-            print("-" * 68)
+            tag = "（教学关）" if item["tutorial"] else ""
+            print("第 %2d 关  %s%s   棋盘 %s   箭头 %2d 支   开局可点 %d 支   "
+                  "失误上限 %d   难度 %s"
+                  % (item["index"], level.name, tag, item["size"], item["arrows"],
+                     item["free"], item["max_mistakes"], "★" * item["stars"]))
+            print("-" * 78)
             for row, line in enumerate(level.layout):
-                pretty = " ".join(line)
-                print("   %d | %s" % (row, pretty))
-            print("-" * 68)
+                print("   %d | %s" % (row, " ".join(line)))
+            print("-" * 78)
             if item["solvable"]:
                 print("   [OK] 可解，共 %d 步" % len(item["order"]))
                 print("   参考顺序：" + describe(level, item["order"]))
@@ -78,6 +80,8 @@ def main():
         print("校验结果：%d 个关卡存在问题 %s" % (len(bad), [b["name"] for b in bad]))
         return 1
     print("校验结果：全部 %d 个关卡均可正常通关。" % len(report))
+    if not args.markdown:
+        print("难度参考：开局可点的箭头越少、棋盘越大，需要扫视的线条就越多，难度越高。")
     return 0
 
 

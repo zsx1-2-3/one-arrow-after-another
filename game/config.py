@@ -16,6 +16,7 @@ FOOTER_HEIGHT = 52        # 底部提示栏高度
 BOARD_MARGIN_X = 40       # 棋盘区域左右留白
 BOARD_MARGIN_Y = 16       # 棋盘区域上下留白
 BOARD_MAX_SIDE = 520      # 棋盘网格的最大边长
+CELL_MAX_SIDE = 88        # 单元格边长上限（小棋盘不要把格子撑得太大）
 CELL_GAP = 8              # 单元格之间的间距
 CELL_RADIUS = 12          # 单元格圆角半径
 ARROW_RATIO = 0.62        # 箭头图形边长 / 单元格边长
@@ -39,6 +40,23 @@ COLOR_SUCCESS = (76, 212, 136)
 COLOR_DANGER = (240, 98, 98)
 COLOR_WARN = (246, 178, 72)
 COLOR_MASK = (8, 11, 20)
+
+# ---- 关卡卡片（关卡总览界面）----
+COLOR_CARD = (32, 40, 66)              # 可挑战
+COLOR_CARD_EDGE = (62, 76, 116)
+COLOR_CARD_HOVER = (46, 58, 94)
+COLOR_CARD_DONE = (28, 58, 48)         # 已通关
+COLOR_CARD_DONE_EDGE = (76, 178, 130)
+COLOR_CARD_LOCKED = (24, 28, 42)       # 未解锁
+COLOR_CARD_LOCKED_EDGE = (42, 48, 66)
+COLOR_LOCK = (96, 106, 134)
+COLOR_STAR = (246, 190, 78)            # 难度星星
+COLOR_STAR_EMPTY = (58, 66, 92)
+
+# ---- 教学关引导 ----
+COLOR_TUTORIAL = (246, 190, 78)        # 目标箭头的高亮环
+COLOR_TUTORIAL_BAR = (46, 40, 26)
+COLOR_TUTORIAL_BAR_EDGE = (108, 88, 44)
 
 # 四个方向对应的箭头颜色（色盲友好度一般，但辨识度高）
 DIR_COLORS = {
