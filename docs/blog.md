@@ -1,6 +1,7 @@
 # 用 AIGC 从零写一个「一箭又一箭」小游戏 —— 软件工程第二次个人作业
 
-> 项目地址：https://github.com/&lt;你的用户名&gt;/one-arrow-after-another
+> 作者：周山翔（福州大学 · 数据科学与大数据技术）
+> 项目地址：https://github.com/zsx123456/one-arrow-after-another
 > 技术栈：Python 3.11 + Pygame 2.6.1
 
 ## 一、写在前面

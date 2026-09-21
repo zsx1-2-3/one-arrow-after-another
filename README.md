@@ -62,7 +62,7 @@
 ### 1. 获取代码
 
 ```bash
-git clone https://github.com/<你的用户名>/one-arrow-after-another.git
+git clone https://github.com/zsx123456/one-arrow-after-another.git
 cd one-arrow-after-another
 ```
 
