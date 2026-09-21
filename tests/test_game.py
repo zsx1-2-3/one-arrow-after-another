@@ -10,6 +10,7 @@
 所以在没有显示器的服务器上也能跑。
 """
 
+import json
 import os
 import random
 import shutil
@@ -31,13 +32,16 @@ if TOOLS not in sys.path:
 import pygame  # noqa: E402
 
 import deshuffle_levels  # noqa: E402
-from game import anim, bgfx, config, ui  # noqa: E402
-from game.app import (OVERLAY_ALL_CLEAR, OVERLAY_FAIL, OVERLAY_WIN,  # noqa: E402
+from game import anim, bgfx, config, scoring, ui  # noqa: E402
+from game.app import (HUD_HEART_GAP, HUD_HEART_SIZE, HUD_HEARTS_X,  # noqa: E402
+                      HUD_SCORE_LABEL_X, HUD_SCORE_VALUE_X,
+                      OVERLAY_ALL_CLEAR, OVERLAY_FAIL, OVERLAY_WIN,
                       SCENE_LEVELS, SCENE_MENU, SCENE_PLAY, Game)
 from game.board import (CLICK_BLOCKED, CLICK_EMPTY, CLICK_FLY,  # noqa: E402
                         CLICK_IGNORED, STATE_CLEARED, STATE_FAILED,
                         STATE_PLAYING, Board, count_free_arrows, solve_level)
-from game.levels import LEVELS, TOTAL_LEVELS, Level, tutorial_level_index  # noqa: E402
+from game.levels import (HP_BY_STARS, LEVELS, TOTAL_LEVELS, Level,  # noqa: E402
+                         tutorial_level_index)
 from game.progress import Progress  # noqa: E402
 
 FRAME = 1.0 / 60.0
@@ -279,6 +283,113 @@ class SolverTestCase(unittest.TestCase):
             self.assertLessEqual(level.cols, 12)
 
 
+class LevelBalanceTestCase(unittest.TestCase):
+    """生命值按难度给：关卡越难，容错越高。
+
+    早期版本每关的容错是固定值，后来变成 5/4/4/4/3/4/3/2/2——越到后面越少，
+    第九关要塞 50 支箭头却只剩 2 颗心，一次手滑就得从头再来。
+    现在生命值由难度星级推出来（levels.HP_BY_STARS），整体只增不减。
+    """
+
+    def test_hp_is_granted_by_difficulty(self):
+        """每关的生命值必须正好是「星级 → 生命值」表里对应的值。"""
+        for index, level in enumerate(LEVELS, start=1):
+            self.assertEqual(
+                level.max_hp, HP_BY_STARS[level.stars],
+                "第 %d 关「%s」是 %d 星，应当给 %d 颗心，实际 %d 颗"
+                % (index, level.name, level.stars, HP_BY_STARS[level.stars], level.max_hp))
+
+    def test_tolerance_grows_from_first_level_to_last(self):
+        """生命值上限整体不下降，最后一关要明显比第 1 关宽容。"""
+        hp = [level.max_hp for level in LEVELS]
+        self.assertEqual(hp, sorted(hp), "生命值不该越到后面越少，实际是 %s" % hp)
+        self.assertGreater(hp[-1], hp[0], "最后一关的容错应当高于第 1 关")
+        for index, level in enumerate(LEVELS, start=1):
+            self.assertGreaterEqual(level.max_hp, 3,
+                                    "第 %d 关只给 %d 颗心，太苛刻了"
+                                    % (index, level.max_hp))
+
+    def test_one_mistake_hurts_less_on_harder_levels(self):
+        """点错一次的代价逐关变小——这就是「容错越来越高」的量化说法。
+
+        比较的是「丢一颗心损失掉本关满分的百分之几」，
+        而不是绝对分数：后面关卡底分更高，绝对分差本来就更大。
+        """
+        penalties = []
+        for level in LEVELS:
+            full = float(scoring.max_score(level))
+            after = scoring.level_score(level, level.max_hp - 1)
+            penalties.append(1.0 - after / full)
+
+        for index in range(len(penalties) - 1):
+            self.assertLessEqual(
+                penalties[index + 1], penalties[index] + 1e-9,
+                "第 %d 关丢一颗心要损失 %.1f%%，比第 %d 关的 %.1f%% 还重"
+                % (index + 2, penalties[index + 1] * 100,
+                   index + 1, penalties[index] * 100))
+        self.assertLess(penalties[-1], penalties[0])
+
+
+class ScoringTestCase(unittest.TestCase):
+    """得分规则：剩下的心越多分越高，一颗心都没丢另有奖励。"""
+
+    def test_full_score_follows_the_difficulty_stars(self):
+        """满分 = 星级 × 300（基础分 250 + 20% 完美奖励）。"""
+        for index, level in enumerate(LEVELS, start=1):
+            self.assertEqual(scoring.base_score(level), level.stars * 250)
+            self.assertEqual(scoring.max_score(level), level.stars * 300,
+                             "第 %d 关满分不对" % index)
+            self.assertEqual(scoring.level_score(level, level.max_hp),
+                             scoring.max_score(level), "满心通关应当拿满分")
+
+    def test_every_mistake_costs_points(self):
+        """同一关里，失去的心越多得分越低，且是严格下降。"""
+        for index, level in enumerate(LEVELS, start=1):
+            scores = [scoring.level_score(level, hp)
+                      for hp in range(level.max_hp, -1, -1)]
+            for before, after in zip(scores, scores[1:]):
+                self.assertGreater(before, after,
+                                   "第 %d 关 %d→%d 颗心时得分没有下降：%s"
+                                   % (index, scores[0], scores[-1], scores))
+
+    def test_perfect_bonus_only_when_nothing_is_lost(self):
+        """零失误奖励只在满心通关时给，而且正好是基础分的 20%。"""
+        for level in LEVELS:
+            bonus = scoring.perfect_bonus(level)
+            self.assertEqual(bonus, scoring.base_score(level) * 20 // 100)
+            self.assertEqual(scoring.level_score(level, level.max_hp),
+                             scoring.base_score(level) + bonus)
+            # 丢一颗心就没有奖励了：剩下的分正好是按比例折算的基础分
+            self.assertEqual(scoring.level_score(level, level.max_hp - 1),
+                             scoring.base_score(level) * (level.max_hp - 1)
+                             // level.max_hp)
+
+    def test_failing_the_level_is_worth_nothing(self):
+        """生命值耗尽时本关 0 分（越界的参数也不会算出一个负数）。"""
+        for level in LEVELS:
+            self.assertEqual(scoring.level_score(level, 0), 0)
+            self.assertEqual(scoring.level_score(level, -2), 0)
+            self.assertEqual(scoring.lost_hearts(level, -2), level.max_hp)
+
+    def test_board_exposes_a_live_score(self):
+        """棋盘自己就知道当前能拿多少分，HUD 直接用这个数（点错立刻掉）。"""
+        level = make_level(BASIC_LAYOUT, max_hp=4)
+        board = Board(level)
+        self.assertEqual(board.hearts_lost, 0)
+        self.assertEqual(board.score, scoring.level_score(level, 4))
+
+        board.click(1, 1)                    # (1,1) 的「>」被 (1,2) 的「v」挡住
+        self.assertEqual(board.hearts_lost, 1)
+        self.assertEqual(board.hp, 3)
+        self.assertEqual(board.score, scoring.level_score(level, 3))
+        self.assertLess(board.score, scoring.level_score(level, 4))
+
+    def test_total_full_score_is_the_sum_of_all_levels(self):
+        self.assertEqual(scoring.total_max_score(LEVELS),
+                         sum(scoring.max_score(level) for level in LEVELS))
+        self.assertGreater(scoring.total_max_score(LEVELS), 1000)
+
+
 class ColorSpreadTestCase(unittest.TestCase):
     """配色打散的回归：相邻的箭头不要大面积朝同一个方向。
 
@@ -417,11 +528,54 @@ class ProgressTestCase(unittest.TestCase):
         self.assertEqual(broken.cleared, set())
 
     def test_reset_clears_everything(self):
-        """清空进度后回到只解锁第 1 关的状态，并且已经落盘。"""
+        """清空进度后回到只解锁第 1 关的状态，最高分也一并清掉，且已经落盘。"""
         self.progress.mark_all_cleared(TOTAL_LEVELS)
+        self.progress.record_score(0, 600)
         self.progress.reset()
         self.assertEqual(self.progress.cleared, set())
-        self.assertEqual(Progress(path=self.path).cleared, set())
+        self.assertEqual(self.progress.scores, {})
+        reloaded = Progress(path=self.path)
+        self.assertEqual(reloaded.cleared, set())
+        self.assertEqual(reloaded.scores, {})
+
+    # ---------------------------------------------------------- 最高分
+    def test_scores_are_recorded_and_only_the_best_one_wins(self):
+        """每关只留最高分：重玩手感差不会把纪录冲掉。"""
+        self.assertEqual(self.progress.best_score(0), 0)
+        self.assertEqual(self.progress.record_score(0, 375), 375)   # 首次记分，增量 375
+        self.assertEqual(self.progress.best_score(0), 375)
+        self.assertEqual(self.progress.record_score(0, 200), 0)     # 打得更差：不覆盖
+        self.assertEqual(self.progress.best_score(0), 375)
+        self.assertEqual(self.progress.record_score(0, 600), 225)   # 刷新纪录，增量 225
+        self.assertEqual(self.progress.best_score(0), 600)
+        self.assertEqual(self.progress.record_score(0, 600), 0)     # 打平也不算刷新
+        self.assertEqual(Progress(path=self.path).best_score(0), 600)
+
+    def test_total_score_is_the_sum_of_each_levels_best(self):
+        """总分 = 各关最高分之和；不存在关卡里的分数不计入。"""
+        self.progress.record_score(0, 300)
+        self.progress.record_score(1, 375)
+        self.progress.record_score(TOTAL_LEVELS + 5, 999)     # 手改存档留下的垃圾关号
+        self.assertEqual(self.progress.total_score(TOTAL_LEVELS), 675)
+
+    def test_old_save_without_scores_still_loads(self):
+        """老存档（version 1，没有 scores 字段）不能因为升级格式丢进度。"""
+        with open(self.path, "w", encoding="utf-8") as handle:
+            json.dump({"version": 1, "cleared": [0, 1]}, handle)
+        loaded = Progress(path=self.path)
+        self.assertEqual(loaded.cleared, {0, 1})
+        self.assertEqual(loaded.scores, {})
+        self.assertEqual(loaded.total_score(TOTAL_LEVELS), 0)
+
+    def test_broken_scores_in_the_save_file_are_ignored(self):
+        """存档里的分数被人手改坏了（非数字、负数）时，只丢掉坏的那几条。"""
+        with open(self.path, "w", encoding="utf-8") as handle:
+            json.dump({"version": 2, "cleared": [0],
+                       "scores": {"0": "abc", "-1": 500, "2": 300, "x": 100}},
+                      handle)
+        loaded = Progress(path=self.path)
+        self.assertEqual(loaded.cleared, {0})
+        self.assertEqual(loaded.scores, {2: 300})
 
 
 class GameFlowTestCase(unittest.TestCase):
@@ -591,6 +745,102 @@ class GameFlowTestCase(unittest.TestCase):
         self.clear_level(TOTAL_LEVELS - 1)
         self.advance()
         self.assertEqual(self.game.overlay, OVERLAY_ALL_CLEAR)
+
+    # ---------------------------------------------------------- 得分结算
+    # 用第 6 关「错位走廊」做样本：6 颗心、满分 1200，中间量足够看出差别。
+    SAMPLE = 5
+
+    def test_clearing_without_mistakes_pays_the_full_score(self):
+        """零失误通关：拿满分、记进存档，结算面板写出完美奖励。"""
+        self.unlock_all()
+        self.clear_level(self.SAMPLE)
+        self.advance()
+
+        game = self.game
+        level = LEVELS[self.SAMPLE]
+        self.assertEqual(game.overlay, OVERLAY_WIN)
+        self.assertTrue(game.score_perfect)
+        self.assertEqual(game.score_max, scoring.max_score(level))
+        self.assertEqual(game.last_score, scoring.max_score(level))
+        self.assertEqual(game.score_gain, game.last_score)     # 首次通关就是全部增量
+        self.assertEqual(self.progress.best_score(self.SAMPLE), game.last_score)
+        self.assertIn("完美奖励", game.score_note()[0])
+        game.draw()                                            # 结算面板画得出来
+
+    def test_every_mistake_lowers_the_score(self):
+        """丢一颗心，HUD 上的得分立刻按比例下降，最终结算也跟着少。"""
+        self.unlock_all()
+        game = self.game
+        level = LEVELS[self.SAMPLE]
+        self.assertTrue(game.start_level(self.SAMPLE))
+        full = scoring.max_score(level)
+        self.assertEqual(game.board.score, full)               # 开局是满分
+
+        target = self.blocked_arrow(game.board)
+        game.click_cell(target.row, target.col)                # 故意点错一次
+        expected = scoring.level_score(level, level.max_hp - 1)
+        self.assertEqual(game.board.score, expected)
+        game.draw()
+
+        for row, col in game.board.solution():                 # 再老老实实通关
+            game.click_cell(row, col)
+        self.advance()
+        self.assertEqual(game.last_score, expected)
+        self.assertLess(game.last_score, full)
+        self.assertFalse(game.score_perfect)
+        self.assertIn("得分 =", game.score_note()[0])
+
+    def test_a_worse_replay_keeps_the_old_record(self):
+        """重玩打得差不会把最高分冲掉（存档只记最好的一次）。"""
+        self.unlock_all()
+        self.clear_level(self.SAMPLE)
+        self.advance()
+        best = self.progress.best_score(self.SAMPLE)
+        self.assertEqual(best, scoring.max_score(LEVELS[self.SAMPLE]))
+
+        game = self.game
+        self.assertTrue(game.start_level(self.SAMPLE))
+        target = self.blocked_arrow(game.board)
+        game.click_cell(target.row, target.col)
+        for row, col in game.board.solution():
+            game.click_cell(row, col)
+        self.advance()
+        self.assertEqual(game.score_gain, 0)
+        self.assertLess(game.last_score, best)
+        self.assertEqual(self.progress.best_score(self.SAMPLE), best)
+
+    def test_failing_a_level_scores_zero(self):
+        """生命值耗尽：本关 0 分，也不写进存档。"""
+        self.unlock_all()
+        game = self.game
+        self.assertTrue(game.start_level(self.SAMPLE))
+        target = self.blocked_arrow(game.board)
+        for _ in range(game.board.max_hp):
+            game.click_cell(target.row, target.col)
+        self.advance()
+        self.assertEqual(game.overlay, OVERLAY_FAIL)
+        self.assertEqual(game.last_score, 0)
+        self.assertEqual(game.score_gain, 0)
+        self.assertEqual(self.progress.best_score(self.SAMPLE), 0)
+        self.assertIn("0 分", game.score_note()[0])
+        game.draw()
+
+    def test_hud_has_room_for_the_widest_level(self):
+        """HUD 三组数字排得下：心最多的一关（7 颗）也不会顶到右边或压到得分。
+
+        生命值上限是按难度给的、最后一关有 7 颗心，最宽的一排心加上
+        「7 / 7」正好顶到得分那一栏就会糊成一片，所以这里用真实字宽量一遍。
+        （三个按钮在上一行，不和这行数字抢位置，所以只需守住窗口右边界。）
+        """
+        widest = max(level.max_hp for level in LEVELS)
+        hearts_right = (HUD_HEARTS_X + widest * HUD_HEART_SIZE
+                        + (widest - 1) * HUD_HEART_GAP + 10
+                        + ui.text_width("%d / %d" % (widest, widest), size=15))
+        self.assertLess(hearts_right, HUD_SCORE_LABEL_X, "生命值压到得分那一栏了")
+
+        score_right = (HUD_SCORE_VALUE_X + ui.text_width("9999", size=26, bold=True) + 8
+                       + ui.text_width("/ 9999", size=14))
+        self.assertLess(score_right, config.WINDOW_WIDTH - 24, "得分顶到窗口右边了")
 
     # ---------------------------------------------------------- T05
     def test_t05_fail_then_restart(self):

@@ -37,11 +37,11 @@ def main():
     report = validate_levels()
 
     if args.markdown:
-        print("| 关卡 | 名称 | 棋盘 | 箭头数 | 密度 | 开局可点 | 生命值 | 难度 | 是否可解 |")
-        print("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+        print("| 关卡 | 名称 | 棋盘 | 箭头数 | 密度 | 开局可点 | 难度 | 生命值 | 本关满分 | 是否可解 |")
+        print("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
         for item in report:
             print(
-                "| 第%d关 | %s | %s | %d | %.2f | %d | %d | %s | %s |"
+                "| 第%d关 | %s | %s | %d | %.2f | %d | %s | %d 颗 | %d | %s |"
                 % (
                     item["index"],
                     item["name"],
@@ -49,8 +49,9 @@ def main():
                     item["arrows"],
                     item["density"],
                     item["free"],
-                    item["max_hp"],
                     "★" * item["stars"],
+                    item["max_hp"],
+                    item["max_score"],
                     "是" if item["solvable"] else "**否**",
                 )
             )
@@ -62,10 +63,11 @@ def main():
             print()
             # 关卡名本身就叫「教学关」时不再重复标注，免得印成「教学关（教学关）」
             tag = "（教学关）" if item["tutorial"] and level.name != "教学关" else ""
-            print("第 %2d 关  %s%s   棋盘 %s   箭头 %2d 支   密度 %.2f   开局可点 %d 支   "
-                  "生命值 %d   难度 %s"
+            print("第 %2d 关  %s%s   棋盘 %s   箭头 %2d 支   密度 %.2f   开局可点 %d 支"
                   % (item["index"], level.name, tag, item["size"], item["arrows"],
-                     item["density"], item["free"], item["max_hp"], "★" * item["stars"]))
+                     item["density"], item["free"]))
+            print("         难度 %s   生命值 %d 颗（容错随难度递增）   本关满分 %d 分"
+                  % ("★" * item["stars"], item["max_hp"], item["max_score"]))
             print("-" * 78)
             for row, line in enumerate(level.layout):
                 print("   %d | %s" % (row, " ".join(line)))
@@ -86,6 +88,11 @@ def main():
         print("难度参考：棋盘尺寸到第 8 关就封顶在 9×9，之后靠密度继续加难——")
         print("          同样的格子里箭头越多，需要逐条扫视的射线就越多；")
         print("          开局可点的箭头越少，越要在开局仔细找出口。")
+        print("生命值参考：按难度星级给，第 1 关 4 颗心、最后一关 7 颗心。")
+        print("            关卡越难容错越高，一次手滑不至于被打回原点。")
+        print("得分参考：本关得分 = 星级×250 × 剩余生命值 ÷ 生命值上限，")
+        print("          一颗心都没丢再 +20%；所有关卡满分合计 %d 分。"
+              % sum(item["max_score"] for item in report))
     return 0
 
 

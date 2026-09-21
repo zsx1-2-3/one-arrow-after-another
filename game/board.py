@@ -7,9 +7,12 @@
       - 路径上没有其它箭头  -> 该箭头飞出棋盘并被消除；
       - 路径上存在其它箭头  -> 不能消除，扣 1 点生命值；
   * 全部箭头消除 -> 通关；生命值耗尽 -> 失败。
+  * 通关时按「剩余生命值 ÷ 生命值上限」折算本关得分（规则见 game/scoring.py）。
 """
 
 from dataclasses import dataclass, field
+
+from .scoring import level_score
 
 # ---------------------------------------------------------------- 常量
 # 方向 -> (行增量, 列增量)。行号向下增大，列号向右增大。
@@ -92,6 +95,20 @@ class Board:
     def hp_left(self):
         """剩余生命值。"""
         return self.hp
+
+    @property
+    def hearts_lost(self):
+        """已经失去的生命值（点错了几次）；一颗心都没丢时是 0。"""
+        return self.max_hp - self.hp
+
+    @property
+    def score(self):
+        """本关当前能拿到的分数，随失去生命值实时下降（规则见 game/scoring.py）。
+
+        放在棋盘上是有意的：得分只跟「丢了几颗心」有关，
+        不需要另外维护一个计数器，也就不会出现两处数字对不上的情况。
+        """
+        return level_score(self.level, self.hp)
 
     def in_bounds(self, row, col):
         return 0 <= row < self.rows and 0 <= col < self.cols

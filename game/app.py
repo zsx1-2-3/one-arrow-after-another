@@ -14,7 +14,7 @@ import math
 
 import pygame
 
-from . import anim, bgfx, config, ui
+from . import anim, bgfx, config, scoring, ui
 from .board import (CLICK_BLOCKED, CLICK_EMPTY, CLICK_FLY, STATE_CLEARED,
                     STATE_FAILED, STATE_PLAYING, Board)
 from .levels import TOTAL_LEVELS, LEVELS
@@ -40,6 +40,22 @@ CARDS_TOP = 142
 
 TOAST_DURATION = 2.0        # 提示气泡停留时间（秒）
 HP_FLASH_DURATION = 0.9     # 刚失去一颗心时，HUD 上那颗心的闪烁时长（秒）
+
+# ---------------------------------------------------------------- 顶部信息栏
+# 关卡标题占一行，右上角留给三个按钮；下面一整行排开
+# 「剩余箭头 / 生命值 / 本关得分」三组数字，横着扫一眼就能读完。
+# 生命值最多 7 颗心（见 levels.HP_BY_STARS），心宽 18 + 间距 7 正好 168 像素，
+# 排在 238~406 之间，不管哪一关都不会挤到右边的得分上去。
+HUD_TITLE_Y = 18
+HUD_ROW_Y = 70              # 三组数字的垂直中心
+HUD_ARROW_LABEL_X = 40
+HUD_ARROW_VALUE_X = 116
+HUD_HP_LABEL_X = 178
+HUD_HEARTS_X = 238
+HUD_HEART_SIZE = 18
+HUD_HEART_GAP = 7
+HUD_SCORE_LABEL_X = 520
+HUD_SCORE_VALUE_X = 594
 
 
 class Game:
@@ -73,6 +89,12 @@ class Game:
         # 教学关引导
         self.tutorial_index = 0
         self.tutorial_done = False
+
+        # 得分：本关打完后的结算结果（结算面板要显示，所以存在 Game 上）
+        self.last_score = 0        # 本关最终得分（失败为 0）
+        self.score_max = 0         # 本关满分，作为「得了多少」的分母
+        self.score_gain = 0        # 比历史最高分多拿了多少（0 = 没刷新纪录）
+        self.score_perfect = False # 是否一颗心都没丢
 
         # 提示气泡 / 二次确认
         self.toast_text = ""
@@ -112,6 +134,10 @@ class Game:
         self.hover_card = None
         self.reset_armed = False
         self.hp_lost_flash = 0.0
+        self.last_score = 0
+        self.score_max = 0
+        self.score_gain = 0
+        self.score_perfect = False
         self.animations.clear()
         self.floats.clear()
         # 提示气泡属于上一屏的上下文，换场景时一起清掉，
@@ -288,7 +314,8 @@ class Game:
 
     @property
     def panel_rect(self):
-        panel = pygame.Rect(0, 0, 560, 340)
+        # 比原来高一些：结果面板多了「本关得分」这一格和底下那句得分说明
+        panel = pygame.Rect(0, 0, 580, 368)
         panel.center = (self.width // 2, self.height // 2)
         return panel
 
@@ -346,10 +373,11 @@ class Game:
         self.buttons = self.make_levels_buttons()
 
     def make_play_buttons(self):
+        # 三个按钮收在顶部右侧，给下面那行「箭头数 / 生命值 / 得分」腾出整条宽度
         return [
-            ui.Button((604, 30, 104, 42), "关卡总览", self.enter_levels, "ghost", size=13),
-            ui.Button((716, 30, 104, 42), "返回主菜单", self.enter_menu, "ghost", size=13),
-            ui.Button((828, 30, 104, 42), "重新开始", self.restart_level, "primary", size=15),
+            ui.Button((604, 10, 104, 40), "关卡总览", self.enter_levels, "ghost", size=13),
+            ui.Button((716, 10, 104, 40), "返回主菜单", self.enter_menu, "ghost", size=13),
+            ui.Button((828, 10, 104, 40), "重新开始", self.restart_level, "primary", size=15),
         ]
 
     def make_overlay_buttons(self):
@@ -362,22 +390,22 @@ class Game:
             left = panel.centerx - total // 2
             for index, (label, action) in enumerate(items):
                 buttons.append(ui.Button(
-                    (left + index * (width + gap), panel.y + 282, width, height),
+                    (left + index * (width + gap), panel.y + 300, width, height),
                     label, action, "ghost", size=16))
 
         if self.overlay == OVERLAY_WIN:
-            buttons.append(ui.Button((panel.centerx - 140, panel.y + 216, 280, 54),
+            buttons.append(ui.Button((panel.centerx - 140, panel.y + 238, 280, 52),
                                      "下一关", self.next_level, "success", size=22))
             add_secondary([("重玩本关", self.restart_level),
                            ("关卡总览", self.enter_levels),
                            ("返回主菜单", self.enter_menu)])
         elif self.overlay == OVERLAY_FAIL:
-            buttons.append(ui.Button((panel.centerx - 140, panel.y + 216, 280, 54),
+            buttons.append(ui.Button((panel.centerx - 140, panel.y + 238, 280, 52),
                                      "重新开始本关", self.restart_level, "primary", size=22))
             add_secondary([("关卡总览", self.enter_levels),
                            ("返回主菜单", self.enter_menu)])
         else:
-            buttons.append(ui.Button((panel.centerx - 140, panel.y + 216, 280, 54),
+            buttons.append(ui.Button((panel.centerx - 140, panel.y + 238, 280, 52),
                                      "查看关卡总览", self.enter_levels, "success", size=22))
             add_secondary([("重玩第 1 关", lambda: self.start_level(0)),
                            ("返回主菜单", self.enter_menu)])
@@ -525,13 +553,23 @@ class Game:
         return None
 
     def show_result(self):
+        level = self.level
+        self.score_max = scoring.max_score(level)
         if self.board.state == STATE_CLEARED:
+            # 得分只看「丢了几颗心」：一颗都没丢拿满分 + 完美奖励，
+            # 每丢一颗按比例扣。重玩只留最高分，所以这里先跟存档里的纪录比一比。
+            self.last_score = scoring.level_score(level, self.board.hp_left)
+            self.score_perfect = self.board.hearts_lost == 0
+            self.score_gain = self.progress.record_score(self.level_index, self.last_score)
             self.progress.mark_cleared(self.level_index)      # 记进度 + 解锁下一关
             if self.level_index >= TOTAL_LEVELS - 1:
                 self.overlay = OVERLAY_ALL_CLEAR
             else:
                 self.overlay = OVERLAY_WIN
         else:
+            self.last_score = 0                               # 失败不给分
+            self.score_perfect = False
+            self.score_gain = 0
             self.overlay = OVERLAY_FAIL
         self.buttons = self.make_overlay_buttons()
 
@@ -558,15 +596,19 @@ class Game:
         ui.draw_text(self.screen, "点击箭头，让它飞出棋盘", (center_x, 118),
                      size=19, color=config.COLOR_TEXT_DIM, anchor="center")
 
-        # 进度一行
+        # 进度一行（顺带报一下总分：目标感主要来自分数的增长）
         cleared = self.progress.cleared_count(TOTAL_LEVELS)
+        total = self.progress.total_score(TOTAL_LEVELS)
+        full = scoring.total_max_score(LEVELS)
         if cleared >= TOTAL_LEVELS:
-            progress_text = "已通关全部 %d 关，随时可以重玩" % TOTAL_LEVELS
+            progress_text = "已通关全部 %d 关 · 总分 %d / %d，随时可以重玩刷分" % (
+                TOTAL_LEVELS, total, full)
         elif cleared == 0:
-            progress_text = "还没开始 · 共 %d 关，第一次玩建议先走一遍教学关" % TOTAL_LEVELS
+            progress_text = "还没开始 · 共 %d 关，满分 %d 分，第一次玩建议先走一遍教学关" % (
+                TOTAL_LEVELS, full)
         else:
-            progress_text = "已通关 %d / %d 关 · 下一关是第 %d 关「%s」" % (
-                cleared, TOTAL_LEVELS, self.next_level_index() + 1,
+            progress_text = "已通关 %d / %d 关 · 总分 %d / %d · 下一关是第 %d 关「%s」" % (
+                cleared, TOTAL_LEVELS, total, full, self.next_level_index() + 1,
                 LEVELS[self.next_level_index()].name)
         ui.draw_text(self.screen, progress_text, (center_x, 150),
                      size=15, color=config.COLOR_TEXT_FAINT, anchor="center")
@@ -588,11 +630,12 @@ class Game:
         rules = [
             ("① 点一下箭头，它就沿着自己的方向飞出棋盘并被消除。", False),
             ("② 如果它前方还有别的箭头挡路，就飞不出去，并且失去", True),
-            ("③ 清空本关所有箭头即可通关；生命值耗尽本关失败，可以重新开始。", False),
-            ("④ 通关一关才会解锁下一关，进度会自动保存。", False),
+            ("③ 清空本关所有箭头即可通关；剩下的生命值越多，本关得分越高。", False),
+            ("④ 一颗心都没丢，另有 +20% 的完美奖励。", False),
+            ("⑤ 生命值耗尽本关失败；通关才解锁下一关，得分与进度都会自动保存。", False),
         ]
         for index, (line, heart_icon) in enumerate(rules):
-            rect = ui.draw_text(self.screen, line, (card.x + 22, card.y + 48 + index * 25),
+            rect = ui.draw_text(self.screen, line, (card.x + 22, card.y + 44 + index * 23),
                                 size=15, color=config.COLOR_TEXT_DIM)
             if heart_icon:
                 # 行尾直接画一颗像素心，而不是写「一心」两个字——
@@ -600,15 +643,15 @@ class Game:
                 self.draw_heart_icon(rect.right + 12, rect.centery)
 
         # 示例区：两种情形上下对照
-        demo_y = card.y + 158
-        divider = card.y + 150
+        demo_y = card.y + 164
+        divider = card.y + 158
         pygame.draw.line(self.screen, config.COLOR_PANEL_EDGE,
                          (card.x + 22, divider), (card.right - 22, divider), 1)
 
         self.draw_demo_row(card.x + 24, demo_y, (">", "v", ".", "."),
                            "「>」前方有箭头挡路 → 飞不出去，并且失去",
                            config.COLOR_DANGER, heart_icon=True)
-        self.draw_demo_row(card.x + 24, demo_y + 56, (">", ".", ".", "."),
+        self.draw_demo_row(card.x + 24, demo_y + 54, (">", ".", ".", "."),
                            "「>」前方一路是空的 → 飞出棋盘并消失",
                            config.COLOR_SUCCESS)
 
@@ -645,8 +688,10 @@ class Game:
         cleared = self.progress.cleared_count(TOTAL_LEVELS)
         unlocked = self.progress.highest_unlocked(TOTAL_LEVELS)
         ui.draw_text(self.screen,
-                     "已通关 %d / %d 关　·　已解锁到第 %d 关　·　进度自动保存"
-                     % (cleared, TOTAL_LEVELS, unlocked + 1),
+                     "已通关 %d / %d 关　·　已解锁到第 %d 关　·　总分 %d / %d　·　进度自动保存"
+                     % (cleared, TOTAL_LEVELS, unlocked + 1,
+                        self.progress.total_score(TOTAL_LEVELS),
+                        scoring.total_max_score(LEVELS)),
                      (58, 92), size=15, color=config.COLOR_TEXT_FAINT)
 
         for index, rect in enumerate(self.card_rects):
@@ -692,21 +737,27 @@ class Game:
         ui.draw_text(self.screen, level.name, (rect.x + 14, rect.y + 40),
                      size=18, bold=True, color=title_color)
 
-        # 规格
-        ui.draw_text(self.screen, "%d×%d · %d 支箭头" % (level.rows, level.cols,
-                                                        level.arrow_count),
-                     (rect.x + 14, rect.y + 64), size=12,
-                     color=config.COLOR_TEXT_FAINT)
+        # 规格：顺手把本关给几颗心写出来，玩家开局前就知道这一关能错几次
+        ui.draw_text(self.screen, "%d×%d · %d 支箭头 · %d 颗心" % (
+            level.rows, level.cols, level.arrow_count, level.max_hp),
+            (rect.x + 14, rect.y + 64), size=12,
+            color=config.COLOR_TEXT_FAINT)
 
-        # 状态
+        # 状态（已通关的关卡把最高分一起报出来：这是重玩的理由）
+        best = self.progress.best_score(index)
         if not unlocked:
             status, status_color = "未解锁", config.COLOR_TEXT_FAINT
+        elif cleared and best > 0:
+            status, status_color = "已通关 · 最高 %d 分" % best, config.COLOR_SUCCESS
         elif cleared:
+            # 老存档（只有通关记录、还没有分数）或截图脚本造的进度会走到这里，
+            # 不写「最高 0 分」这种让人以为存档坏了的说法
             status, status_color = "已通关", config.COLOR_SUCCESS
         elif level.tutorial:
             status, status_color = "教学关 · 建议先玩", config.COLOR_TUTORIAL
         else:
-            status, status_color = "可挑战", config.COLOR_ACCENT
+            status, status_color = ("可挑战 · 满分 %d" % scoring.max_score(level),
+                                    config.COLOR_ACCENT)
         ui.draw_text(self.screen, status, (rect.x + 14, rect.y + 82), size=13,
                      color=status_color)
 
@@ -736,31 +787,44 @@ class Game:
         pygame.draw.line(self.screen, config.COLOR_HUD_LINE,
                          (0, config.HUD_HEIGHT - 1), (self.width, config.HUD_HEIGHT - 1))
 
-        ui.draw_text(self.screen, "第 %d / %d 关" % (self.level_index + 1, TOTAL_LEVELS),
-                     (40, 22), size=24, bold=True)
-        ui.draw_text(self.screen, self.level.name, (40, 58), size=17,
-                     color=config.COLOR_TEXT_DIM)
+        # 第一行：关卡标题（右上角那三个按钮由 draw() 统一画）
+        rect = ui.draw_text(self.screen, "第 %d / %d 关" % (self.level_index + 1, TOTAL_LEVELS),
+                            (40, HUD_TITLE_Y), size=22, bold=True)
+        ui.draw_text(self.screen, self.level.name, (rect.right + 14, HUD_TITLE_Y + 3),
+                     size=17, color=config.COLOR_TEXT_DIM)
 
-        # 剩余箭头
-        ui.draw_text(self.screen, "剩余箭头", (300, 26), size=15, color=config.COLOR_TEXT_DIM)
-        ui.draw_text(self.screen, str(self.board.remaining), (300, 46),
-                     size=32, color=config.COLOR_ACCENT, bold=True)
+        # 第二行：三组数字横着排开——剩余箭头 / 生命值 / 本关得分
+        ui.draw_text(self.screen, "剩余箭头", (HUD_ARROW_LABEL_X, HUD_ROW_Y), size=14,
+                     color=config.COLOR_TEXT_DIM, anchor="midleft")
+        ui.draw_text(self.screen, str(self.board.remaining), (HUD_ARROW_VALUE_X, HUD_ROW_Y),
+                     size=26, color=config.COLOR_ACCENT, bold=True, anchor="midleft")
 
-        # 剩余生命值：实心像素心 = 还能错几次，只剩轮廓的 = 已经失去的那几颗
-        ui.draw_text(self.screen, "剩余生命值", (420, 24), size=15, color=config.COLOR_TEXT_DIM)
+        # 生命值：实心像素心 = 还能错几次，只剩轮廓的 = 已经失去的那几颗
+        ui.draw_text(self.screen, "生命值", (HUD_HP_LABEL_X, HUD_ROW_Y), size=14,
+                     color=config.COLOR_TEXT_DIM, anchor="midleft")
         hp = self.board.hp_left
-        # 心形是 10 格宽的像素图，宽度取 20 时每格正好 2 像素，缩放后粗细均匀
-        heart_size, heart_gap = 20, 8
+        heart_size, heart_gap = HUD_HEART_SIZE, HUD_HEART_GAP
         # 刚失去的那颗心套一圈短暂的红色脉冲——点错时一眼看出是哪颗心没了
         if self.hp_lost_flash > 0.0 and hp < self.board.max_hp:
-            center = (420 + heart_size / 2.0 + hp * (heart_size + heart_gap), 66)
-            ui.draw_glow(self.screen, center, 22, (176, 56, 56),
+            center = (HUD_HEARTS_X + heart_size / 2.0 + hp * (heart_size + heart_gap),
+                      HUD_ROW_Y)
+            ui.draw_glow(self.screen, center, heart_size + 4, (176, 56, 56),
                          self.hp_lost_flash, falloff=1.7)
-        width = ui.draw_hearts(self.screen, (420, 66), hp, self.board.max_hp,
-                               size=heart_size, gap=heart_gap)
+        width = ui.draw_hearts(self.screen, (HUD_HEARTS_X, HUD_ROW_Y), hp,
+                               self.board.max_hp, size=heart_size, gap=heart_gap)
         ui.draw_text(self.screen, "%d / %d" % (hp, self.board.max_hp),
-                     (420 + width + 10, 66), size=18, color=config.COLOR_TEXT_DIM,
-                     anchor="midleft")
+                     (HUD_HEARTS_X + width + 10, HUD_ROW_Y), size=15,
+                     color=config.COLOR_TEXT_DIM, anchor="midleft")
+
+        # 本关得分：点错会立刻往下掉，所以刚丢心时把数字染红提示一下
+        ui.draw_text(self.screen, "本关得分", (HUD_SCORE_LABEL_X, HUD_ROW_Y), size=14,
+                     color=config.COLOR_TEXT_DIM, anchor="midleft")
+        score_color = config.COLOR_DANGER if self.hp_lost_flash > 0.0 else config.COLOR_SCORE
+        rect = ui.draw_text(self.screen, str(self.board.score), (HUD_SCORE_VALUE_X, HUD_ROW_Y),
+                            size=26, color=score_color, bold=True, anchor="midleft")
+        ui.draw_text(self.screen, "/ %d" % scoring.max_score(self.level),
+                     (rect.right + 8, HUD_ROW_Y + 4), size=14,
+                     color=config.COLOR_TEXT_FAINT, anchor="midleft")
 
     def draw_board(self):
         rows, cols = self.board.rows, self.board.cols
@@ -971,31 +1035,58 @@ class Game:
             desc = "第 %d 关「%s」的箭头全部飞出了棋盘" % (self.level_index + 1, self.level.name)
         elif self.overlay == OVERLAY_FAIL:
             title, color = "本关失败", config.COLOR_DANGER
-            desc = "生命值已经耗尽，再试一次吧"
+            desc = "生命值已经耗尽，本关不得分，再试一次吧"
         else:
             title, color = "全部通关！", config.COLOR_SUCCESS
             desc = "%d 个关卡的箭头都被你清理干净了" % TOTAL_LEVELS
 
-        ui.draw_text(self.screen, title, (panel.centerx, panel.y + 58),
+        ui.draw_text(self.screen, title, (panel.centerx, panel.y + 54),
                      size=44, color=color, bold=True, anchor="center")
-        ui.draw_text(self.screen, desc, (panel.centerx, panel.y + 106),
+        ui.draw_text(self.screen, desc, (panel.centerx, panel.y + 102),
                      size=17, color=config.COLOR_TEXT_DIM, anchor="center")
 
         stats = [
-            ("本关箭头", str(self.board.total)),
-            ("点错次数", str(self.board.max_hp - self.board.hp_left)),
-            ("剩余生命值", "%d / %d" % (self.board.hp_left, self.board.max_hp)),
+            ("本关箭头", str(self.board.total), False),
+            ("失去生命值", "%d 颗" % self.board.hearts_lost, False),
+            ("本关得分", "%d / %d" % (self.last_score, self.score_max), True),
         ]
-        box_w, box_h, gap = 150, 64, 12
+        box_w, box_h, gap = 160, 68, 14
         total = len(stats) * box_w + (len(stats) - 1) * gap
         left = panel.centerx - total // 2
-        for index, (label, value) in enumerate(stats):
-            box = pygame.Rect(left + index * (box_w + gap), panel.y + 136, box_w, box_h)
-            ui.draw_round_rect(self.screen, box, (40, 49, 76), radius=12)
-            ui.draw_text(self.screen, label, (box.centerx, box.y + 16),
+        for index, (label, value, highlight) in enumerate(stats):
+            box = pygame.Rect(left + index * (box_w + gap), panel.y + 132, box_w, box_h)
+            ui.draw_round_rect(self.screen, box,
+                               config.COLOR_STAT_BOX_SCORE if highlight else config.COLOR_STAT_BOX,
+                               radius=12)
+            ui.draw_text(self.screen, label, (box.centerx, box.y + 18),
                          size=14, color=config.COLOR_TEXT_DIM, anchor="center")
-            ui.draw_text(self.screen, value, (box.centerx, box.y + 44),
-                         size=22, bold=True, anchor="center")
+            ui.draw_text(self.screen, value, (box.centerx, box.y + 46), size=20,
+                         bold=True, anchor="center",
+                         color=config.COLOR_SCORE if highlight else config.COLOR_TEXT)
+
+        # 底下那句「为什么是这个分数」：直接写出算式，玩家能自己核对
+        note, note_color = self.score_note()
+        ui.draw_text(self.screen, note, (panel.centerx, panel.y + 218),
+                     size=15, color=note_color, anchor="center")
+
+    def score_note(self):
+        """结果面板底部的得分说明，返回 (文字, 颜色)。"""
+        if self.overlay == OVERLAY_FAIL:
+            return ("生命值耗尽时本关得 0 分——先通关，再谈分数", config.COLOR_TEXT_FAINT)
+
+        parts = []
+        if self.score_perfect:
+            # 把奖励的来源写清楚：基础分只按剩余生命值折算，奖励是额外给的
+            parts.append("零失误，额外 +%d 分完美奖励" % scoring.perfect_bonus(self.level))
+        else:
+            parts.append("得分 = %d × %d ÷ %d" % (scoring.base_score(self.level),
+                                                self.board.hp_left, self.board.max_hp))
+        if self.score_gain > 0:
+            parts.append("刷新纪录 +%d" % self.score_gain)
+        parts.append("总分 %d / %d" % (self.progress.total_score(TOTAL_LEVELS),
+                                      scoring.total_max_score(LEVELS)))
+        return ("　·　".join(parts),
+                config.COLOR_SUCCESS if self.score_perfect else config.COLOR_TEXT_DIM)
 
     # ---------------------------------------------------------------- 提示气泡
     def toast_position(self):
