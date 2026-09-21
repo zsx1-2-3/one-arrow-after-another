@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""自动化测试：覆盖作业要求中的 T01~T06 六个测试用例，外加若干边界检查。
+"""自动化测试：覆盖作业要求中的 T01~T06 六个测试用例，外加边界检查、进度解锁、
+关卡总览交互与教学关引导。
 
 运行方式（在项目根目录下执行）：
     python tests/test_game.py
@@ -10,7 +11,9 @@
 """
 
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 
 # 必须在 import pygame 之前设置，才能无头运行
@@ -24,12 +27,13 @@ if ROOT not in sys.path:
 import pygame  # noqa: E402
 
 from game import config  # noqa: E402
-from game.app import (OVERLAY_FAIL, OVERLAY_WIN, SCENE_MENU, SCENE_PLAY,  # noqa: E402
-                      Game)
+from game.app import (OVERLAY_ALL_CLEAR, OVERLAY_FAIL, OVERLAY_WIN,  # noqa: E402
+                      SCENE_LEVELS, SCENE_MENU, SCENE_PLAY, Game)
 from game.board import (CLICK_BLOCKED, CLICK_EMPTY, CLICK_FLY,  # noqa: E402
                         CLICK_IGNORED, STATE_CLEARED, STATE_FAILED,
                         STATE_PLAYING, Board, solve_level)
-from game.levels import LEVELS, Level  # noqa: E402
+from game.levels import LEVELS, TOTAL_LEVELS, Level, tutorial_level_index  # noqa: E402
+from game.progress import Progress  # noqa: E402
 
 FRAME = 1.0 / 60.0
 
@@ -175,6 +179,25 @@ class SolverTestCase(unittest.TestCase):
             self.assertEqual(board.state, STATE_CLEARED)
             self.assertEqual(board.remaining, 0)
 
+    def test_level_count_and_difficulty_ramp(self):
+        """关卡数量足够多，且难度整体是递增的。"""
+        self.assertGreaterEqual(TOTAL_LEVELS, 10)
+        scores = [level.difficulty_score for level in LEVELS]
+        self.assertEqual(scores, sorted(scores), "难度分应当从左到右递增")
+
+    def test_every_level_has_at_least_one_playable_arrow(self):
+        """每个关卡开局都必须至少有一支能点的箭头，否则玩家一上手就是死局。"""
+        for level in LEVELS:
+            self.assertGreaterEqual(level.free_count, 1,
+                                    "关卡「%s」开局无可点箭头" % level.name)
+
+    def test_stars_within_range(self):
+        """难度星级必须落在 1~5 之间，且不随难度提高而下降。"""
+        stars = [level.stars for level in LEVELS]
+        for index, value in enumerate(stars):
+            self.assertTrue(1 <= value <= 5, "第 %d 关星级越界" % (index + 1))
+        self.assertEqual(stars, sorted(stars), "星级应当不下降")
+
     def test_deadlock_is_detected(self):
         """互相阻挡的死锁布局必须被判定为无解。"""
         layout = ("....", ".><.", "....", "....")
@@ -192,11 +215,96 @@ class SolverTestCase(unittest.TestCase):
         with self.assertRaises(ValueError):
             make_level(("....", "...."))             # 一个箭头都没有
 
+    def test_tutorial_level_must_have_steps(self):
+        """教学关必须带引导步骤，否则界面上会没有任何提示。"""
+        with self.assertRaises(ValueError):
+            Level(name="坏教学关", hint="", max_mistakes=3,
+                  layout=("....", ".>..", "...."), tutorial=True)
+
     def test_level_sizes_are_within_screen(self):
         """关卡尺寸不能超过窗口能容纳的范围。"""
         for level in LEVELS:
             self.assertLessEqual(level.rows, 12)
             self.assertLessEqual(level.cols, 12)
+
+
+class ProgressTestCase(unittest.TestCase):
+    """闯关进度与解锁规则（纯逻辑，不需要 pygame）。"""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="arrow_progress_")
+        self.path = os.path.join(self.dir, "progress.json")
+        self.progress = Progress(path=self.path, autoload=False)
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_only_first_level_unlocked_at_start(self):
+        """全新存档只解锁第 1 关。"""
+        self.assertEqual(self.progress.highest_unlocked(TOTAL_LEVELS), 0)
+        self.assertTrue(self.progress.is_unlocked(0, TOTAL_LEVELS))
+        self.assertFalse(self.progress.is_unlocked(1, TOTAL_LEVELS))
+
+    def test_clearing_unlocks_the_next_level(self):
+        """通关一关之后才解锁下一关。"""
+        self.progress.mark_cleared(0)
+        self.assertEqual(self.progress.highest_unlocked(TOTAL_LEVELS), 1)
+        self.assertTrue(self.progress.is_unlocked(1, TOTAL_LEVELS))
+        self.assertFalse(self.progress.is_unlocked(2, TOTAL_LEVELS))
+
+        self.progress.mark_cleared(1)
+        self.assertTrue(self.progress.is_unlocked(2, TOTAL_LEVELS))
+
+    def test_skipping_a_level_does_not_unlock_further(self):
+        """跳着通关不算数：第 2 关没过，第 3 关依然锁着。"""
+        self.progress.mark_cleared(0)
+        self.progress.mark_cleared(2)                  # 正常玩法下点不到，这里直接构造
+        self.assertEqual(self.progress.highest_unlocked(TOTAL_LEVELS), 1)
+        self.assertFalse(self.progress.is_unlocked(2, TOTAL_LEVELS))
+
+    def test_cleared_count_next_index_and_all_cleared(self):
+        """统计与「下一关」的取值。"""
+        self.assertEqual(self.progress.cleared_count(TOTAL_LEVELS), 0)
+        self.assertEqual(self.progress.next_index(TOTAL_LEVELS), 0)
+
+        self.progress.mark_cleared(0)
+        self.assertEqual(self.progress.cleared_count(TOTAL_LEVELS), 1)
+        self.assertEqual(self.progress.next_index(TOTAL_LEVELS), 1)
+
+        self.progress.mark_all_cleared(TOTAL_LEVELS)
+        self.assertTrue(self.progress.all_cleared(TOTAL_LEVELS))
+        self.assertEqual(self.progress.next_index(TOTAL_LEVELS), 0)   # 全通关后回到第 1 关
+
+    def test_mark_cleared_is_idempotent(self):
+        """重复标记同一关不会出错，也不重复写盘。"""
+        self.assertTrue(self.progress.mark_cleared(0))
+        self.assertFalse(self.progress.mark_cleared(0))
+
+    def test_save_and_reload(self):
+        """存档写到磁盘后能被重新读回来。"""
+        self.progress.mark_cleared(0)
+        self.progress.mark_cleared(1)
+
+        reloaded = Progress(path=self.path)
+        self.assertEqual(reloaded.cleared, {0, 1})
+        self.assertEqual(reloaded.highest_unlocked(TOTAL_LEVELS), 2)
+
+    def test_missing_or_broken_save_file_is_tolerated(self):
+        """存档不存在或内容损坏时，应当当成空进度而不是崩溃。"""
+        missing = Progress(path=os.path.join(self.dir, "nope.json"))
+        self.assertEqual(missing.cleared, set())
+
+        with open(self.path, "w", encoding="utf-8") as handle:
+            handle.write("{ 这不是合法的 JSON")
+        broken = Progress(path=self.path)
+        self.assertEqual(broken.cleared, set())
+
+    def test_reset_clears_everything(self):
+        """清空进度后回到只解锁第 1 关的状态，并且已经落盘。"""
+        self.progress.mark_all_cleared(TOTAL_LEVELS)
+        self.progress.reset()
+        self.assertEqual(self.progress.cleared, set())
+        self.assertEqual(Progress(path=self.path).cleared, set())
 
 
 class GameFlowTestCase(unittest.TestCase):
@@ -212,7 +320,14 @@ class GameFlowTestCase(unittest.TestCase):
         pygame.quit()
 
     def setUp(self):
-        self.game = Game(self.screen)
+        # 每个用例一份独立的临时存档，互不影响、也不会碰真实的 progress.json
+        self.dir = tempfile.mkdtemp(prefix="arrow_game_")
+        self.progress = Progress(path=os.path.join(self.dir, "progress.json"),
+                                 autoload=False)
+        self.game = Game(self.screen, progress=self.progress)
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
 
     def advance(self, seconds=1.5):
         """推进若干个渲染帧（用于等待结果面板弹出）。"""
@@ -228,6 +343,17 @@ class GameFlowTestCase(unittest.TestCase):
                 return arrow
         self.fail("本关没有找到被挡住的箭头，测试用例需要调整")
 
+    def clear_level(self, index):
+        """用求解器给出的顺序把某一关打通。"""
+        self.assertTrue(self.game.start_level(index), "第 %d 关进不去" % (index + 1))
+        for row, col in self.game.board.solution():
+            self.game.click_cell(row, col)
+
+    def unlock_all(self):
+        self.progress.mark_all_cleared(TOTAL_LEVELS)
+        self.game.enter_menu()
+
+    # ---------------------------------------------------------- 开始界面
     def test_start_screen_and_start_button(self):
         """开始界面存在，点「开始游戏」能进入第 1 关。"""
         self.assertEqual(self.game.scene, SCENE_MENU)
@@ -239,9 +365,28 @@ class GameFlowTestCase(unittest.TestCase):
         self.assertEqual(self.game.level_index, 0)
         self.assertEqual(self.game.board.remaining, LEVELS[0].arrow_count)
 
+    def test_menu_explains_the_rules(self):
+        """主菜单必须有玩法说明与进入关卡总览的入口。"""
+        labels = [button.label for button in self.game.buttons]
+        self.assertIn("关卡总览", labels)
+        self.assertIn("退出游戏", labels)
+        self.assertEqual(len(self.game.buttons), 3)
+
+    def test_primary_button_follows_progress(self):
+        """主按钮文字会随进度变化：从「开始游戏」到「继续第 N 关」。"""
+        self.assertEqual(self.game.buttons[0].label, "开始游戏")
+        self.progress.mark_cleared(0)
+        self.game.enter_menu()
+        self.assertEqual(self.game.buttons[0].label, "继续第 2 关")
+        self.progress.mark_all_cleared(TOTAL_LEVELS)
+        self.game.enter_menu()
+        self.assertEqual(self.game.buttons[0].label, "重新挑战第 1 关")
+
     def test_render_every_scene_without_error(self):
         """各个画面都能正常渲染（顺便覆盖绘制代码）。"""
         self.game.draw()                                # 开始界面
+        self.game.enter_levels()
+        self.game.draw()                                # 关卡总览
         self.game.start_level(0)
         self.game.draw()                                # 游戏界面
         for row, col in self.game.board.solution():
@@ -262,6 +407,7 @@ class GameFlowTestCase(unittest.TestCase):
 
         self.advance()
         self.assertEqual(game.overlay, OVERLAY_WIN)      # 弹出通关面板
+        self.assertTrue(self.progress.is_cleared(0))     # 顺便记下进度
 
         next_button = game.buttons[0]
         self.assertEqual(next_button.label, "下一关")
@@ -274,12 +420,10 @@ class GameFlowTestCase(unittest.TestCase):
 
     def test_t04_clearing_the_last_level_shows_all_clear(self):
         """打完最后一关显示「全部通关」。"""
-        game = self.game
-        game.start_level(len(LEVELS) - 1)
-        for row, col in game.board.solution():
-            game.click_cell(row, col)
+        self.unlock_all()
+        self.clear_level(TOTAL_LEVELS - 1)
         self.advance()
-        self.assertEqual(game.overlay, "allclear")
+        self.assertEqual(self.game.overlay, OVERLAY_ALL_CLEAR)
 
     # ---------------------------------------------------------- T05
     def test_t05_fail_then_restart(self):
@@ -308,9 +452,14 @@ class GameFlowTestCase(unittest.TestCase):
 
     # ---------------------------------------------------------- T06
     def test_t06_restart_mid_game(self):
-        """T06 游戏进行中重新开始 -> 箭头布局和失误次数都恢复。"""
+        """T06 游戏进行中重新开始 -> 箭头布局和失误次数都恢复。
+
+        用第 2 关（初次拉弓）来测：它同时存在「能飞」和「被挡住」的箭头，
+        在教学关里消掉一支之后会全部畅通，就制造不出失误了。
+        """
         game = self.game
-        game.start_level(0)
+        self.progress.mark_cleared(0)                    # 先解锁第 2 关
+        self.assertTrue(game.start_level(1))
         board = game.board
         total = board.total
 
@@ -352,6 +501,140 @@ class GameFlowTestCase(unittest.TestCase):
         target = game.cell_rect(free.row, free.col).center
         game.handle_click(target)
         self.assertIsNone(game.board.arrow_at(free.row, free.col))
+
+    # ---------------------------------------------------------- 关卡解锁
+    def test_locked_level_cannot_be_started(self):
+        """没通关前一关时，后面的关卡进不去，并且给出提示。"""
+        self.assertFalse(self.game.start_level(3))
+        self.assertEqual(self.game.scene, SCENE_MENU)
+        self.assertEqual(self.game.level_index, 0)
+        self.assertGreater(self.game.toast_timer, 0)      # 弹了提示
+        self.assertIn("解锁", self.game.toast_text)
+
+    def test_clearing_a_level_unlocks_the_next_one(self):
+        """通关之后，下一关立刻变成可进入。"""
+        self.assertFalse(self.game.is_unlocked(1))
+        self.clear_level(0)
+        self.advance()
+        self.assertTrue(self.game.is_unlocked(1))
+        self.assertTrue(self.game.start_level(1))
+        self.assertEqual(self.game.level_index, 1)
+
+    # ---------------------------------------------------------- 关卡总览
+    def test_level_select_lists_all_levels(self):
+        """关卡总览里每张卡片对应一个关卡。"""
+        self.game.enter_levels()
+        self.assertEqual(self.game.scene, SCENE_LEVELS)
+        self.assertEqual(len(self.game.card_rects), TOTAL_LEVELS)
+        self.game.draw()
+
+    def test_clicking_a_locked_card_only_shows_a_hint(self):
+        """点未解锁的卡片不会开局，只提示先通关哪一关。"""
+        game = self.game
+        game.enter_levels()
+        game.handle_click(game.card_rects[TOTAL_LEVELS - 1].center)
+        self.assertEqual(game.scene, SCENE_LEVELS)
+        self.assertIsNone(game.board)
+        self.assertGreater(game.toast_timer, 0)
+        self.assertIn("解锁", game.toast_text)
+
+    def test_clicking_an_unlocked_card_starts_that_level(self):
+        """点已解锁的卡片直接开局。"""
+        game = self.game
+        game.enter_levels()
+        game.handle_click(game.card_rects[0].center)
+        self.assertEqual(game.scene, SCENE_PLAY)
+        self.assertEqual(game.level_index, 0)
+
+    def test_reset_progress_needs_two_clicks(self):
+        """「清空进度」要点两次才真的清，避免手滑。"""
+        self.progress.mark_all_cleared(TOTAL_LEVELS)
+        game = self.game
+        game.enter_levels()
+
+        reset_button = game.buttons[1]
+        game.handle_click(reset_button.rect.center)
+        self.assertTrue(game.reset_armed)
+        self.assertEqual(self.progress.cleared_count(TOTAL_LEVELS), TOTAL_LEVELS)
+
+        game.handle_click(game.buttons[1].rect.center)
+        self.assertFalse(game.reset_armed)
+        self.assertEqual(self.progress.cleared_count(TOTAL_LEVELS), 0)
+        self.assertFalse(game.is_unlocked(1))
+
+    # ---------------------------------------------------------- 教学关
+    def test_tutorial_is_the_first_level(self):
+        """教学关排在第 1 关的位置，并且带引导步骤。"""
+        self.assertEqual(tutorial_level_index(), 0)
+        self.assertTrue(LEVELS[0].tutorial)
+        self.assertGreater(len(LEVELS[0].steps), 0)
+
+    def test_tutorial_steps_advance_one_by_one(self):
+        """照着引导点，步骤会一步步推进，最后引导结束。"""
+        game = self.game
+        game.start_level(0)
+        total_steps = len(game.level.steps)
+        self.assertFalse(game.tutorial_done)
+
+        for index in range(total_steps):
+            step = game.current_step
+            self.assertIsNotNone(step, "第 %d 步引导丢失" % (index + 1))
+            result = game.click_cell(step.row, step.col)
+            self.assertIsNotNone(result)
+            self.assertEqual(result.kind, step.expect,
+                             "第 %d 步的预期是 %s，实际是 %s"
+                             % (index + 1, step.expect, result.kind))
+            self.advance(0.12)
+
+        self.assertTrue(game.tutorial_done)
+        self.assertIsNone(game.current_step)
+        self.assertEqual(game.board.state, STATE_CLEARED)
+
+    def test_tutorial_resyncs_when_player_deviates(self):
+        """玩家不按提示点时，引导会自动跳过已经失效的步骤，而不是卡住。"""
+        game = self.game
+        game.start_level(0)
+        first = game.current_step
+        self.assertEqual(first.expect, "blocked")
+
+        # 故意先点「挡路的那一支」：目标 (1,1) 因此变得可以飞出，
+        # 于是第 1 步（教碰撞）与第 2 步（教飞出）都失效，引导应直接跳到第 3 步。
+        blocker = game.current_step
+        game.click_cell(1, 3)                      # (1,3) 的「v」，就是挡路的那一支
+        self.advance(0.12)
+
+        step = game.current_step
+        self.assertIsNotNone(step)
+        self.assertEqual((step.row, step.col), (blocker.row, blocker.col))
+        self.assertEqual(step.expect, "fly")
+        self.assertEqual(game.tutorial_index, 2)
+
+    def test_tutorial_ring_only_drawn_for_current_step(self):
+        """引导高亮只在教学关且步骤未走完时出现（顺带覆盖绘制代码）。"""
+        game = self.game
+        game.start_level(0)
+        self.assertIsNotNone(game.current_step)
+        game.draw()
+        for row, col in game.board.solution():
+            game.click_cell(row, col)
+        self.advance(0.2)
+        self.assertIsNone(game.current_step)
+        game.draw()
+
+    # ---------------------------------------------------------- 全关卡回归
+    def test_all_levels_can_be_cleared_in_order(self):
+        """按顺序把 12 关全部打通，验证解锁链路与关卡数据整体可用。"""
+        game = self.game
+        for index in range(TOTAL_LEVELS):
+            self.assertTrue(game.start_level(index),
+                            "第 %d 关应当已解锁" % (index + 1))
+            for row, col in game.board.solution():
+                self.assertEqual(game.click_cell(row, col).kind, CLICK_FLY)
+                self.advance(0.5)
+            self.advance()
+            self.assertTrue(self.progress.is_cleared(index),
+                            "第 %d 关没有被记为通关" % (index + 1))
+        self.assertEqual(game.overlay, OVERLAY_ALL_CLEAR)
 
 
 def main():
