@@ -11,6 +11,7 @@
 """
 
 import os
+import random
 import shutil
 import sys
 import tempfile
@@ -23,15 +24,19 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
+TOOLS = os.path.join(ROOT, "tools")
+if TOOLS not in sys.path:
+    sys.path.insert(0, TOOLS)
 
 import pygame  # noqa: E402
 
+import deshuffle_levels  # noqa: E402
 from game import anim, bgfx, config, ui  # noqa: E402
 from game.app import (OVERLAY_ALL_CLEAR, OVERLAY_FAIL, OVERLAY_WIN,  # noqa: E402
                       SCENE_LEVELS, SCENE_MENU, SCENE_PLAY, Game)
 from game.board import (CLICK_BLOCKED, CLICK_EMPTY, CLICK_FLY,  # noqa: E402
                         CLICK_IGNORED, STATE_CLEARED, STATE_FAILED,
-                        STATE_PLAYING, Board, solve_level)
+                        STATE_PLAYING, Board, count_free_arrows, solve_level)
 from game.levels import LEVELS, TOTAL_LEVELS, Level, tutorial_level_index  # noqa: E402
 from game.progress import Progress  # noqa: E402
 
@@ -272,6 +277,72 @@ class SolverTestCase(unittest.TestCase):
         for level in LEVELS:
             self.assertLessEqual(level.rows, 12)
             self.assertLessEqual(level.cols, 12)
+
+
+class ColorSpreadTestCase(unittest.TestCase):
+    """配色打散的回归：相邻的箭头不要大面积朝同一个方向。
+
+    同向的两支箭头挨在一起，在屏幕上就是两块同色贴在一起；一整排同向
+    就是一条色带，看着既单调又显得简单（早期第 8 关相邻同向对占 59%、
+    最大同色块 6 格）。现在关卡定稿前会过一遍 tools/deshuffle_levels.py。
+    """
+
+    MAX_SAME_RATIO = 0.28      # 相邻同向对占比上限（方向随机撒的时代期望值是 0.25）
+    MAX_BLOCK = 4              # 同方向连通块的最大格子数上限
+
+    def test_adjacent_arrows_are_mostly_different_directions(self):
+        """每关「相邻且同向」的箭头对不能太多。"""
+        for index, level in enumerate(LEVELS, start=1):
+            ratio, _ = same_color_cluster(level)
+            self.assertLessEqual(
+                ratio, self.MAX_SAME_RATIO,
+                "第 %d 关「%s」相邻同向对占 %.0f%%，屏幕上会连成同色的片"
+                % (index, level.name, ratio * 100))
+
+    def test_same_color_blocks_stay_small(self):
+        """同方向的箭头不该连成一大块。"""
+        for index, level in enumerate(LEVELS, start=1):
+            _, biggest = same_color_cluster(level)
+            self.assertLessEqual(
+                biggest, self.MAX_BLOCK,
+                "第 %d 关「%s」有 %d 支同向箭头连成一块" % (index, level.name, biggest))
+
+    def test_arrow_colors_are_still_decided_only_by_direction(self):
+        """打散配色只动关卡布局，不动调色板：一个方向仍然只有一种颜色。"""
+        self.assertEqual(len(config.DIR_COLORS), 4)
+        for level in LEVELS:
+            for row, line in enumerate(level.layout):
+                for col, char in enumerate(line):
+                    direction = _char_direction(char)
+                    if direction is None:
+                        continue
+                    self.assertEqual(ui.arrow_color(direction),
+                                     config.DIR_COLORS[direction])
+
+    def test_deshuffle_keeps_the_level_solvable_and_no_easier(self):
+        """打散工具只换方向：换完仍然可解，开局可点数不会变多。
+
+        这是这个工具唯一的存在理由——为了好看把题目改坏（变成死局、或者
+        顺手把开局可点数抬上去）是不允许的，所以拿最扎堆的一关实测一遍。
+        """
+        level = max(LEVELS, key=lambda item: same_color_cluster(item)[0])
+        arrows = [(row, col, direction) for row, col, direction in level.arrows]
+        before_same, _ = deshuffle_levels.pair_stats(level.rows, level.cols, arrows)
+        before_free = level.free_count
+
+        rng = random.Random(20260921)
+        result, (same, _, free0, _) = deshuffle_levels.deshuffle(
+            level.rows, level.cols, arrows, rng, attempts=400, max_free0=before_free)
+
+        self.assertIsNotNone(
+            solve_level(level.rows, level.cols, result), "打散之后关卡无解了")
+        self.assertEqual(free0, count_free_arrows(level.rows, level.cols, result))
+        self.assertLessEqual(same, before_same, "打散不该让同向相邻对变多")
+        self.assertLessEqual(free0, before_free, "打散不该让开局变容易")
+        self.assertEqual(
+            sorted((row, col) for row, col, _ in result),
+            sorted((row, col) for row, col, _ in arrows),
+            "打散只换方向，位置一支都不能动")
 
 
 class ProgressTestCase(unittest.TestCase):
@@ -942,6 +1013,51 @@ class VisualVarietyTestCase(unittest.TestCase):
 def _char_direction(char):
     """关卡布局里的字符 -> 方向名；空格或未知字符返回 None。"""
     return {">": "right", "<": "left", "^": "up", "v": "down"}.get(char)
+
+
+def same_color_cluster(level):
+    """统计一关里「相邻且同向」的箭头对占比，以及同方向连通块的最大格子数。
+
+    相邻指上下左右；同向的两支箭头挨在一起，屏幕上就是两块同色贴在一起。
+    返回 (占比, 最大块)。占比在方向完全随机时约 0.25，方向交错排可以接近 0。
+    """
+    grid = {}
+    for row, line in enumerate(level.layout):
+        for col, char in enumerate(line):
+            direction = _char_direction(char)
+            if direction is not None:
+                grid[(row, col)] = direction
+
+    pair = same = 0
+    for (row, col), direction in grid.items():
+        for d_row, d_col in ((1, 0), (0, 1)):
+            other = grid.get((row + d_row, col + d_col))
+            if other is None:
+                continue
+            pair += 1
+            if other == direction:
+                same += 1
+
+    seen = set()
+    biggest = 0
+    for start in grid:
+        if start in seen:
+            continue
+        direction = grid[start]
+        stack = [start]
+        seen.add(start)
+        size = 0
+        while stack:
+            row, col = stack.pop()
+            size += 1
+            for d_row, d_col in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nxt = (row + d_row, col + d_col)
+                if nxt not in seen and grid.get(nxt) == direction:
+                    seen.add(nxt)
+                    stack.append(nxt)
+        biggest = max(biggest, size)
+
+    return (same / float(pair) if pair else 0.0), biggest
 
 
 def main():

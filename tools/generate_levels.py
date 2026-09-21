@@ -35,6 +35,20 @@
 也看「自己射线有多长」——射线越长，将来能被后续放置的箭头挡住的空间就越大。
 这样一来 9×9 放 50 支（密度 0.62）仍能把开局可点数压在 5 支左右。
 
+配色打散
+--------
+逆向构造只关心「挡不挡得住」，完全不看方向好不好看，早期产物因此出现了大片同向箭头
+相邻成块的情况（实测第 8 关相邻同向对占 59%、最大同色块 6 格，屏幕上就是一大片同色）。
+两个手段解决：
+
+    1) 放置时打分再加一项 `- clash × w_same`：clash 是这个候选方向与**已放置的邻居**
+       同向的个数。邻居越同色越不划算，于是新箭头会主动避开同色邻居。
+       每个相邻对只会被检查一次（后放的那个负责避让），所以这一项足以把占比压下来。
+    2) 生成后按 `cluster_metrics()` 硬性筛选：相邻同向对占比 > 38%、或同色块 > 3 格
+       的布局直接丢掉。理论最均匀是 25%（四个方向完全交错）。
+
+严格档位一个都没挑到时自动放宽一次，免得生成器空手而归。
+
 用法：
     python tools/generate_levels.py                     # 打印预设难度的候选
     python tools/generate_levels.py -r 8 -c 8 -n 30 -k 5 --seed 2026
@@ -43,6 +57,7 @@
 参数说明：
     -r/-c  行数 / 列数        -n  箭头数量        -k  输出前 k 个候选
     --seed 随机种子（同一个种子结果可复现）
+    --w-same 候选打分里「避开同色邻居」的权重（调大配色更交错，难度可能略降）
 """
 
 import argparse
@@ -59,7 +74,7 @@ CHAR = {"up": "^", "down": "v", "left": "<", "right": ">"}
 
 # ------------------------------------------------------------------ 生成
 def place_reverse(rows, cols, count, rng, bias=0.9, w_block=1.0, w_ray=3.0,
-                  forbid_empty_ray=True):
+                  w_same=2.0, forbid_empty_ray=True):
     """逆向放置 count 支箭头，返回 {'placement': [(r, c, dir), ...]}。
 
     placement[0] 是最后被消掉的箭头，placement[-1] 是开局第一个应该被点掉的箭头。
@@ -67,6 +82,8 @@ def place_reverse(rows, cols, count, rng, bias=0.9, w_block=1.0, w_ray=3.0,
 
     bias：有多大概率走「挑最优候选」的路子；剩下的小概率纯随机，保证布局多样。
     w_block / w_ray：候选打分权重（挡住别人的价值 / 自己射线长度的价值）。
+    w_same：候选打分里「避开同色邻居」的权重——与已放置的邻居同向就扣分，
+        这样同一种颜色不会在屏幕上连成一片（见文件开头「配色打散」）。
     forbid_empty_ray：是否避开射线为空的候选（见文件开头的说明），
         这类箭头贴着边朝外、永远能飞，是「高密度反而变简单」的元凶。
 
@@ -78,12 +95,13 @@ def place_reverse(rows, cols, count, rng, bias=0.9, w_block=1.0, w_ray=3.0,
     seen = [[0] * cols for _ in range(rows)]      # 被多少支箭头的射线覆盖
     placement = []
     directions = list(DIRECTIONS)
+    neighbours = ((1, 0), (-1, 0), (0, 1), (0, -1))
 
     for step in range(count):
         samples = []
 
         def collect(row, col, direction):
-            """若合法就收集起来（含射线长度）。"""
+            """若合法就收集起来（含射线长度、与已放置邻居同向的数量）。"""
             if (row, col) in placed:
                 return
             d_row, d_col = DIRECTIONS[direction]
@@ -95,7 +113,11 @@ def place_reverse(rows, cols, count, rng, bias=0.9, w_block=1.0, w_ray=3.0,
                 raylen += 1
                 r += d_row
                 c += d_col
-            samples.append((row, col, direction, raylen))
+            clash = 0                             # 邻居里已经有多少支同向箭头
+            for n_row, n_col in neighbours:
+                if placed.get((row + n_row, col + n_col)) == direction:
+                    clash += 1
+            samples.append((row, col, direction, raylen, clash))
 
         for _ in range(80):                       # 随机采样
             collect(rng.randrange(rows), rng.randrange(cols), rng.choice(directions))
@@ -115,13 +137,15 @@ def place_reverse(rows, cols, count, rng, bias=0.9, w_block=1.0, w_ray=3.0,
                 samples = non_empty
 
         if rng.random() < bias:
-            # 优先选「挡住别人多 + 自己射线长」的位置；并列时在前几名里随机，保证布局多样
+            # 优先选「挡住别人多 + 自己射线长 + 不和邻居撞色」的位置；
+            # 并列时在前几名里随机，保证布局多样
             samples.sort(key=lambda item: seen[item[0]][item[1]] * w_block
-                         + item[3] * w_ray, reverse=True)
+                         + item[3] * w_ray
+                         - item[4] * w_same, reverse=True)
             pool = samples[:4]
         else:
             pool = samples
-        row, col, direction, _ = rng.choice(pool)
+        row, col, direction = rng.choice(pool)[:3]
 
         placed[(row, col)] = direction
         placement.append((row, col, direction))
@@ -207,6 +231,48 @@ def spread(rows, cols, placement):
     return used_rows / rows, used_cols / cols
 
 
+def cluster_metrics(rows, cols, placement):
+    """配色打散的度量：相邻同向对占比 + 同方向连通块的最大格子数。
+
+    相邻（上下左右）的两支箭头若同向，在屏幕上就是两块同色贴在一起；
+    占比越低整屏越交错。四个方向完全均匀交错时理论值是 0.25。
+    连通块看的是「扎堆能扎多大」——两块同色挨着算 2 格，一路连下去就越看越像一片。
+    """
+    grid = {(row, col): direction for row, col, direction in placement}
+
+    pair = same = 0
+    for (row, col), direction in grid.items():
+        for d_row, d_col in ((1, 0), (0, 1)):
+            other = grid.get((row + d_row, col + d_col))
+            if other is None:
+                continue
+            pair += 1
+            if other == direction:
+                same += 1
+    ratio = same / float(pair) if pair else 0.0
+
+    seen = set()
+    biggest = 0
+    for start in grid:
+        if start in seen:
+            continue
+        direction = grid[start]
+        stack = [start]
+        seen.add(start)
+        size = 0
+        while stack:
+            row, col = stack.pop()
+            size += 1
+            for d_row, d_col in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nxt = (row + d_row, col + d_col)
+                if nxt not in seen and grid.get(nxt) == direction:
+                    seen.add(nxt)
+                    stack.append(nxt)
+        biggest = max(biggest, size)
+
+    return ratio, biggest
+
+
 def to_ascii(rows, cols, placement):
     grid = [["." for _ in range(cols)] for _ in range(rows)]
     for row, col, direction in placement:
@@ -223,10 +289,11 @@ def describe_placement(placement):
 
 def show(rows, cols, placement, stats, index, verbose=False):
     row_spread, col_spread = spread(rows, cols, placement)
-    print("候选 %d   棋盘 %d×%d   箭头 %d 支   密度 %.2f   开局可点 %d   平均可选 %.2f   峰值 %d   铺开 %.0f%%/%.0f%%"
+    same_ratio, biggest = cluster_metrics(rows, cols, placement)
+    print("候选 %d   棋盘 %d×%d   箭头 %d 支   密度 %.2f   开局可点 %d   平均可选 %.2f   峰值 %d   铺开 %.0f%%/%.0f%%   同向相邻 %.0f%%   同色块 %d"
           % (index, rows, cols, len(placement), len(placement) / float(rows * cols),
              stats["free0"], stats["avg"], stats["peak"],
-             row_spread * 100, col_spread * 100))
+             row_spread * 100, col_spread * 100, same_ratio * 100, biggest))
     for line in to_ascii(rows, cols, placement):
         print("    " + " ".join(line))
     print("    建议通关顺序：" + describe_placement(list(reversed(placement))))
@@ -235,15 +302,41 @@ def show(rows, cols, placement, stats, index, verbose=False):
 
 
 def generate(rows, cols, count, keep, seed, attempts=900, bias=0.9,
-             w_block=1.0, w_ray=3.0, forbid_empty_ray=True):
-    """多次随机尝试，返回按难度分（越高越难）排序的前 keep 个候选。"""
+             w_block=1.0, w_ray=3.0, w_same=2.0, forbid_empty_ray=True,
+             max_same_ratio=0.38, max_block=3, max_free0=None, min_score=None):
+    """多次随机尝试，返回按难度分（越高越难）排序的前 keep 个候选。
+
+    两条硬线：
+      * 配色：相邻同向对占比 ≤ max_same_ratio、同方向连通块 ≤ max_block 格；
+      * 难度：开局可点 ≤ max_free0、难度分 ≥ min_score（None = 不限制）。
+
+    「配色打散」和「难度」是会互相拉扯的——同向相邻少了，互相挡住的链条也跟着少，
+    开局能点的箭头就变多。所以某一档没挑到时**逐级放宽**（配色 +0.06 / +1 格，
+    难度 -3 分 / 开局可点 +2）而不是直接放弃，最多放宽三级。
+    """
+    for level in range(4):
+        results = _collect_candidates(
+            rows, cols, count, seed + level * 513, attempts, bias, w_block, w_ray,
+            w_same, forbid_empty_ray,
+            max_same_ratio + level * 0.06, max_block + level,
+            None if max_free0 is None else max_free0 + level * 2,
+            None if min_score is None else min_score - level * 3.0)
+        if results:
+            return results[:keep]
+    return []
+
+
+def _collect_candidates(rows, cols, count, seed, attempts, bias, w_block, w_ray,
+                        w_same, forbid_empty_ray, max_same_ratio, max_block,
+                        max_free0, min_score):
+    """按给定条件收集候选，返回 [(难度分, placement, stats), ...]（未截断）。"""
     rng = random.Random(seed)
     results = []
     seen = set()
 
     for _ in range(attempts):
         data = place_reverse(rows, cols, count, rng, bias=bias,
-                             w_block=w_block, w_ray=w_ray,
+                             w_block=w_block, w_ray=w_ray, w_same=w_same,
                              forbid_empty_ray=forbid_empty_ray)
         if data is None:
             continue
@@ -259,15 +352,27 @@ def generate(rows, cols, count, keep, seed, attempts=900, bias=0.9,
         # 开局至少留一支能点的箭头，否则玩家一上手就是死局
         if stats["free0"] < 1:
             continue
+        if max_free0 is not None and stats["free0"] > max_free0:
+            continue
+        score = difficulty(rows, cols, placement, stats)
+        if min_score is not None and score < min_score:
+            continue
         # 布局要铺得开，避免箭头全挤在一两行里
         row_spread, col_spread = spread(rows, cols, placement)
         if row_spread < 0.6 or col_spread < 0.6:
             continue
+        # 配色要交错，不能同色扎堆
+        same_ratio, biggest = cluster_metrics(rows, cols, placement)
+        if same_ratio > max_same_ratio or biggest > max_block:
+            continue
 
-        results.append((difficulty(rows, cols, placement, stats), placement, stats))
+        results.append((score, placement, stats))
 
-    results.sort(key=lambda item: item[0], reverse=True)   # 最难的排前面
-    return results[:keep]
+    # 最难的排前面；难度相同时挑配色更交错的
+    results.sort(key=lambda item: (round(item[0], 3),
+                                   -cluster_metrics(rows, cols, item[1])[0]),
+                 reverse=True)
+    return results
 
 
 PRESETS = [
@@ -301,6 +406,16 @@ def main():
                         help="候选打分里「挡住别人」的权重")
     parser.add_argument("--w-ray", type=float, default=3.0,
                         help="候选打分里「自己射线长度」的权重")
+    parser.add_argument("--w-same", type=float, default=2.0,
+                        help="候选打分里「避开同色邻居」的权重，调大配色更交错")
+    parser.add_argument("--max-same-ratio", type=float, default=0.38,
+                        help="允许的最大「相邻同向对占比」，超过就丢弃该布局")
+    parser.add_argument("--max-block", type=int, default=3,
+                        help="允许的最大「同方向连通块」格子数")
+    parser.add_argument("--max-free0", type=int, default=None,
+                        help="允许的最大开局可点数（不填则不限制，重新生成旧关卡时用来锁难度）")
+    parser.add_argument("--min-score", type=float, default=None,
+                        help="要求的最低难度分（不填则不限制）")
     parser.add_argument("--allow-empty-ray", action="store_true",
                         help="允许放置射线为空的箭头（默认禁止，见文件开头说明）")
     parser.add_argument("--ascii", action="store_true", help="只输出 ASCII 布局，便于复制")
@@ -316,7 +431,12 @@ def main():
         results = generate(rows, cols, count, args.keep, seed,
                            attempts=args.attempts, bias=args.bias,
                            w_block=args.w_block, w_ray=args.w_ray,
-                           forbid_empty_ray=not args.allow_empty_ray)
+                           w_same=args.w_same,
+                           forbid_empty_ray=not args.allow_empty_ray,
+                           max_same_ratio=args.max_same_ratio,
+                           max_block=args.max_block,
+                           max_free0=args.max_free0,
+                           min_score=args.min_score)
         print("=" * 78)
         print("难度档位 %d：%d×%d，目标 %d 支箭头（密度 %.2f，%d 个候选）"
               % (spec_index, rows, cols, count, count / float(rows * cols), len(results)))
