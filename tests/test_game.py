@@ -26,7 +26,7 @@ if ROOT not in sys.path:
 
 import pygame  # noqa: E402
 
-from game import config  # noqa: E402
+from game import bgfx, config, ui  # noqa: E402
 from game.app import (OVERLAY_ALL_CLEAR, OVERLAY_FAIL, OVERLAY_WIN,  # noqa: E402
                       SCENE_LEVELS, SCENE_MENU, SCENE_PLAY, Game)
 from game.board import (CLICK_BLOCKED, CLICK_EMPTY, CLICK_FLY,  # noqa: E402
@@ -678,6 +678,157 @@ class GameFlowTestCase(unittest.TestCase):
             self.assertTrue(self.progress.is_cleared(index),
                             "第 %d 关没有被记为通关" % (index + 1))
         self.assertEqual(game.overlay, OVERLAY_ALL_CLEAR)
+
+
+class VisualVarietyTestCase(unittest.TestCase):
+    """画面观感的回归：箭头配色要打散、文字折行要守中文排版规则、背景要真的在动。
+
+    这些不属于玩法逻辑，但都是「看着很平 / 很糙」的真实问题，
+    而且都能用数值断言钉住，所以一并纳入回归，避免以后又退回去。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        # 前面的用例组结束时调用过 pygame.quit()，缓存里的 Font / Surface 已经失效，
+        # 不清掉的话这里再画图会直接段错误（不是抛异常，是进程崩掉）
+        was_initialized = pygame.get_init()
+        if not was_initialized:
+            pygame.init()
+        ui.clear_caches()
+        if pygame.display.get_surface() is None:
+            pygame.display.set_mode((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
+
+    @classmethod
+    def tearDownClass(cls):
+        pygame.quit()
+
+    def test_arrow_variant_is_deterministic_and_in_range(self):
+        """同一个格子每次都取到同一个变体，且落在合法档位内。"""
+        for row in range(12):
+            for col in range(12):
+                variant = ui.arrow_variant(row, col)
+                self.assertEqual((row * 3 + col * 5) % config.DIR_VARIANTS, variant)
+                self.assertTrue(0 <= variant < config.DIR_VARIANTS)
+                self.assertEqual(variant, ui.arrow_variant(row, col))
+
+    def test_adjacent_arrows_never_share_a_color(self):
+        """上下左右相邻的箭头一定不同色（同向也是这样）。
+
+        这是「同色箭头连成一片」的直接解药：
+        (行×3 + 列×5) % 4 里 3 和 5 都与 4 互质，所以四个方向的邻居必然错开。
+        """
+        for level in LEVELS:
+            for row in range(level.rows):
+                for col in range(level.cols):
+                    direction = _char_direction(level.layout[row][col])
+                    if direction is None:
+                        continue
+                    for d_row, d_col in ((0, 1), (1, 0)):
+                        near_row, near_col = row + d_row, col + d_col
+                        if not (near_row < level.rows and near_col < level.cols):
+                            continue
+                        near_direction = _char_direction(level.layout[near_row][near_col])
+                        if near_direction != direction:
+                            continue          # 不同方向的色相本来就不同
+                        self.assertNotEqual(
+                            ui.arrow_variant(row, col),
+                            ui.arrow_variant(near_row, near_col),
+                            "%s 第 (%d,%d) 与 (%d,%d) 两个同向箭头取了同一个变体"
+                            % (level.name, row, col, near_row, near_col))
+
+    def test_every_direction_has_its_own_palette(self):
+        """四个方向都要有各自的配色，且同方向各档颜色互不相同。"""
+        self.assertEqual(set(config.DIR_PALETTES), set(config.DIR_COLORS))
+        for direction, palette in config.DIR_PALETTES.items():
+            self.assertEqual(len(palette), config.DIR_VARIANTS, direction)
+            self.assertEqual(len(set(palette)), len(palette),
+                             "%s 的配色里有重复档位" % direction)
+            for color in palette:
+                self.assertTrue(all(0 <= value <= 255 for value in color))
+        groups = [set(palette) for palette in config.DIR_PALETTES.values()]
+        for index, group in enumerate(groups):
+            for other in groups[index + 1:]:
+                self.assertFalse(group & other, "两个方向的配色串了")
+
+    def test_dense_levels_use_many_distinct_colors(self):
+        """高密度关卡实际用到的颜色数要够多，不能一片同色。
+
+        箭头少的关卡最多也就用得出「箭头数」种颜色，所以下限取两者的较小值；
+        箭头数上到 20 支以后，要求至少铺开 12 种，避免又退回一色到底。
+        """
+        for level in LEVELS:
+            colors = set()
+            for row in range(level.rows):
+                for col in range(level.cols):
+                    direction = _char_direction(level.layout[row][col])
+                    if direction is not None:
+                        colors.add(ui.arrow_color(direction, ui.arrow_variant(row, col)))
+            expected = min(8, level.arrow_count)
+            if level.arrow_count >= 20:
+                expected = max(expected, 12)
+            self.assertGreaterEqual(
+                len(colors), expected,
+                "%s 只用了 %d 种箭头颜色（期望至少 %d 种），画面会糊成一块"
+                % (level.name, len(colors), expected))
+
+    def test_wrap_text_keeps_punctuation_off_line_start(self):
+        """折行后不允许有行以收尾标点开头（中文排版的基本要求）。"""
+        texts = [step.text for level in LEVELS for step in level.steps]
+        texts += ["⑵ 如果它前方还有别的箭头挡路，就飞不出去，并且扣掉 1 点生命值。",
+                  "⑷ 通关一关才会解锁下一关，进度会自动保存。"]
+        for text in texts:
+            for width in (240, 320, 480, 700):
+                lines = ui.wrap_text(text, size=15, max_width=width)
+                for line in lines:
+                    if line:
+                        self.assertNotIn(line[0], ui._NO_LINE_START,
+                                         "「%s」在宽度 %d 下折出了以「%s」开头的行"
+                                         % (text, width, line[0]))
+
+    def test_background_actually_moves(self):
+        """背景要真的在动：星点会上飘，时间推进后画面像素确实变了。"""
+        surface = pygame.display.get_surface()
+        background = bgfx.Background((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
+        before = [star["y"] for star in background.stars]
+
+        for _ in range(120):
+            background.update(FRAME)
+        after = [star["y"] for star in background.stars]
+        self.assertTrue(any(a < b for a, b in zip(after, before)),
+                        "推进 2 秒后没有任何星点移动")
+
+        background.draw(surface)
+        first = pygame.image.tobytes(surface, "RGB")
+        for _ in range(180):
+            background.update(FRAME)
+        background.draw(surface)
+        second = pygame.image.tobytes(surface, "RGB")
+        self.assertNotEqual(first, second, "过了 3 秒背景还是同一张画面")
+
+    def test_background_shows_a_shooting_star_sooner_or_later(self):
+        """流星按间隔出现，不会一直不出现。"""
+        background = bgfx.Background((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
+        seen = False
+        for _ in range(int(config.BG_SHOOT_INTERVAL[1] / FRAME) + 120):
+            background.update(FRAME)
+            if background.shooting is not None:
+                seen = True
+                break
+        self.assertTrue(seen, "等了 %d 秒都没等到流星" % config.BG_SHOOT_INTERVAL[1])
+
+    def test_every_scene_renders_with_background(self):
+        """三个场景都要能带着动态背景正常画出来。"""
+        surface = pygame.display.get_surface()
+        background = bgfx.Background((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
+        for scene in (SCENE_MENU, SCENE_LEVELS, SCENE_PLAY):
+            background.set_scene(scene)
+            background.update(FRAME)
+            background.draw(surface)
+
+
+def _char_direction(char):
+    """关卡布局里的字符 -> 方向名；空格或未知字符返回 None。"""
+    return {">": "right", "<": "left", "^": "up", "v": "down"}.get(char)
 
 
 def main():
