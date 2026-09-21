@@ -26,7 +26,7 @@ if ROOT not in sys.path:
 
 import pygame  # noqa: E402
 
-from game import bgfx, config, ui  # noqa: E402
+from game import anim, bgfx, config, ui  # noqa: E402
 from game.app import (OVERLAY_ALL_CLEAR, OVERLAY_FAIL, OVERLAY_WIN,  # noqa: E402
                       SCENE_LEVELS, SCENE_MENU, SCENE_PLAY, Game)
 from game.board import (CLICK_BLOCKED, CLICK_EMPTY, CLICK_FLY,  # noqa: E402
@@ -441,6 +441,56 @@ class GameFlowTestCase(unittest.TestCase):
         self.game.draw()                                # 通关界面
         self.assertEqual(self.game.overlay, OVERLAY_WIN)
 
+    def test_blocked_click_pops_a_broken_heart_not_hanzi(self):
+        """点错时飘出来的是一颗「碎掉的像素心」，不是「失去一心」四个汉字。
+
+        生命值本来就用心的形状表示，所以扣血的提示也用同一套图形；
+        文字提示只留给「这里没有箭头」这种和生命值无关的消息。
+        """
+        self.game.start_level(0)
+        arrow = self.blocked_arrow(self.game.board)
+        self.assertTrue(self.game.click_cell(arrow.row, arrow.col))
+
+        hearts = [item for item in self.game.floats
+                  if isinstance(item, anim.FloatingHeart)]
+        self.assertEqual(len(hearts), 1, "点错一次应该正好飘出一颗心")
+        heart = hearts[0]
+        self.assertEqual(heart.color, config.COLOR_HP)
+        self.assertGreater(heart.size, 0)
+
+        for text in [item.text for item in self.game.floats
+                     if isinstance(item, anim.FloatingText)]:
+            self.assertNotIn("一心", text, "扣血提示不该再用汉字描述")
+
+        # 心会自己飘完消失，不会一直挂在画面上
+        for _ in range(int(heart.duration / FRAME) + 4):
+            self.game.update(FRAME)
+        self.assertFalse([item for item in self.game.floats
+                          if isinstance(item, anim.FloatingHeart)],
+                         "心碎动画播完要自动移除")
+
+    def test_broken_heart_animation_renders_and_fades_out(self):
+        """心碎动画：两半分开、心往上飘、末端淡出，每一帧都画得出来。"""
+        heart = anim.FloatingHeart((480, 360), size=40, duration=1.2, rise=50)
+        self.assertEqual(heart.left.get_width() + heart.right.get_width(), 40,
+                         "左右两半拼起来应该是完整的一颗心")
+
+        for _ in range(18):                      # 前 0.3 秒：应该还看得很清楚
+            heart.update(FRAME)
+            heart.draw(self.screen)
+        self.assertEqual(heart.alpha, 255, "前 30% 的时间不该已经开始淡出")
+        self.assertLess(heart.lift, 0.0, "心应该已经离开原位往上飘了")
+
+        for _ in range(18):                      # 0.3 ~ 0.6 秒：开始淡出
+            heart.update(FRAME)
+            heart.draw(self.screen)
+        self.assertLess(heart.alpha, 255, "后半段应该开始淡出")
+
+        while not heart.update(FRAME):           # 一直播到结束
+            heart.draw(self.screen)
+        self.assertEqual(heart.progress, 1.0)
+        self.assertEqual(heart.alpha, 0, "播完之后要完全淡出，不能留一颗挂在画面上")
+
     # ---------------------------------------------------------- T04
     def test_t04_clear_level_then_go_to_next_level(self):
         """T04 消除本关全部箭头 -> 显示通关并进入下一关。"""
@@ -816,6 +866,77 @@ class VisualVarietyTestCase(unittest.TestCase):
             background.set_scene(scene)
             background.update(FRAME)
             background.draw(surface)
+
+    # ---------------------------------------------------------- 生命值图标
+    def test_heart_icon_is_a_pixel_art_grid(self):
+        """生命值图标是「像素心」：规整网格、左右对称、顶部中间留凹口。"""
+        art = config.HEART_PIXEL_ART
+        self.assertGreaterEqual(len(art), 4, "像素心太小了，看不出心的形状")
+        width = len(art[0])
+        for row in art:
+            self.assertEqual(len(row), width, "像素心每一行必须一样长")
+            self.assertTrue(set(row) <= {"#", "."}, "像素心只允许 # 和 . 两种格子")
+            self.assertEqual(row, row[::-1], "像素心必须左右对称")
+        self.assertEqual(art[0][width // 2 - 1: width // 2 + 1], "..",
+                         "心形顶部中间要留出凹口，否则看着像个三角形")
+        self.assertIn("#", art[-1], "心形底部要有尖")
+
+    def test_heart_surface_matches_the_grid(self):
+        """渲染出来的心和网格一一对应：格子在就是实心，不在就是透明。"""
+        size = 40
+        image = ui.heart_surface(size, config.COLOR_HP)
+        self.assertEqual(image.get_width(), size)
+        self.assertEqual(image.get_height(), int(round(size * ui.HEART_ASPECT)))
+
+        def opaque(col, row):
+            x = int((col + 0.5) * image.get_width() / float(ui.HEART_COLS))
+            y = int((row + 0.5) * image.get_height() / float(ui.HEART_ROWS))
+            return image.get_at((x, y)).a > 0
+
+        for row in range(ui.HEART_ROWS):
+            for col in range(ui.HEART_COLS):
+                self.assertEqual(opaque(col, row),
+                                 config.HEART_PIXEL_ART[row][col] == "#",
+                                 "第 %d 行第 %d 格和图案对不上" % (row, col))
+
+    def test_lost_heart_is_an_empty_outline(self):
+        """已经失去的那颗心只剩外沿：内部镂空，和实心的一眼能区分。"""
+        image = ui.heart_surface(40, config.COLOR_HP_LOST, filled=False)
+        solid = ui.heart_surface(40, config.COLOR_HP, filled=True)
+
+        def opaque(target, col, row):
+            x = int((col + 0.5) * target.get_width() / float(ui.HEART_COLS))
+            y = int((row + 0.5) * target.get_height() / float(ui.HEART_ROWS))
+            return target.get_at((x, y)).a > 0
+
+        hollowed = 0
+        for row in range(ui.HEART_ROWS):
+            for col in range(ui.HEART_COLS):
+                if config.HEART_PIXEL_ART[row][col] != "#":
+                    continue
+                self.assertTrue(opaque(solid, col, row), "实心心不该有缺口")
+                if not opaque(image, col, row):
+                    hollowed += 1
+        self.assertGreater(hollowed, 0, "已经失去的心应该只剩轮廓，内部是空的")
+
+    def test_hud_hearts_are_pixel_hearts(self):
+        """HUD 那一排生命值画的也是像素心：还有的用亮色、失去的用暗色。"""
+        surface = pygame.display.get_surface()
+        surface.fill((0, 0, 0))
+        size, gap = 20, 8
+        height = int(size * ui.HEART_ASPECT)
+        width = ui.draw_hearts(surface, (40, 40), 2, 3, size=size, gap=gap)
+        self.assertEqual(width, 3 * size + 2 * gap, "返回的整排宽度不对")
+
+        def pixels_of(index):
+            rect = pygame.Rect(40 + index * (size + gap), 40 - height // 2, size, height)
+            return [surface.get_at((x, y))[:3]
+                    for x in range(rect.left, rect.right)
+                    for y in range(rect.top, rect.bottom)]
+
+        self.assertIn(config.COLOR_HP, pixels_of(0), "还剩的那颗应该是亮色的心")
+        self.assertIn(config.COLOR_HP_LOST, pixels_of(2), "失去的那颗应该是暗色的心")
+        self.assertNotIn(config.COLOR_HP, pixels_of(2), "失去的那颗不该还是亮的")
 
 
 def _char_direction(char):

@@ -112,7 +112,7 @@ class Impact:
 
 
 class FloatingText:
-    """向上飘动并淡出的提示文字，例如「-1 生命值」。"""
+    """向上飘动并淡出的提示文字（例如「这里没有箭头」）。"""
 
     def __init__(self, text, position, color=config.COLOR_TEXT, size=22,
                  duration=0.9, rise=40):
@@ -140,3 +140,77 @@ class FloatingText:
         plate = rect.inflate(padding * 2, padding)
         ui.draw_round_rect_alpha(surface, plate, (0, 0, 0), int(120 * (1.0 - self.progress)), radius=8)
         surface.blit(image, rect)
+
+
+class FloatingHeart:
+    """失去一颗生命值：像素心从格子里弹起、裂成两半，然后淡出。
+
+    这里刻意不写「失去一心」四个字——生命值本身就用心的形状表示，
+    心碎的画面比一行文字更直接，也不会和「这里没有箭头」那句文字提示混成一片。
+    """
+
+    def __init__(self, position, color=config.COLOR_HP, size=40,
+                 duration=1.15, rise=52):
+        self.position = pygame.Vector2(position)
+        self.color = tuple(color)
+        self.size = int(size)
+        self.duration = duration
+        self.rise = float(rise)
+        self.elapsed = 0.0
+        self.progress = 0.0
+        self.left, self.right = self._halves()
+
+    def _halves(self):
+        """把整颗心切成左右两半（只做一次），供"心碎"动画使用。"""
+        image = ui.heart_surface(self.size, self.color)
+        width, height = image.get_size()
+        half = width // 2
+        left = pygame.Surface((half, height), pygame.SRCALPHA)
+        left.blit(image, (0, 0))
+        right = pygame.Surface((width - half, height), pygame.SRCALPHA)
+        right.blit(image, (-half, 0))
+        return left, right
+
+    def update(self, dt):
+        self.elapsed += dt
+        self.progress = min(1.0, self.elapsed / self.duration)
+        return self.progress >= 1.0
+
+    @property
+    def lift(self):
+        """先向上弹起、再落回来（正弦曲线，最高点约为 rise）。"""
+        return -self.rise * math.sin(math.pi * min(1.0, self.progress * 1.15))
+
+    @property
+    def alpha(self):
+        """前三分之一保持不透明，之后淡出，别让玩家没看清就消失了。"""
+        t = self.progress
+        if t <= 0.32:
+            return 255
+        return max(0, int(255 * (1.0 - (t - 0.32) / 0.68) ** 1.3))
+
+    def draw(self, surface):
+        t = self.progress
+        alpha = self.alpha
+        if alpha <= 0:
+            return
+
+        center_x = self.position[0]
+        base_y = self.position[1] + self.lift
+
+        # 刚扣血时心口泛一圈红光，指出"就是这里出的事"
+        flash = max(0.0, 1.0 - t * 2.4)
+        if flash > 0:
+            ui.draw_glow(surface, (center_x, base_y), int(self.size * 0.85),
+                         (198, 62, 62), flash, falloff=2.0)
+
+        # 两半越分越开、并各自向外倾斜——看起来就是心裂开了
+        spread = self.size * 0.32 * (t ** 1.5)
+        tilt = 18.0 * t
+        left_image = pygame.transform.rotate(self.left, tilt)
+        right_image = pygame.transform.rotate(self.right, -tilt)
+        quarter = self.size * 0.25
+        for image, dx in ((left_image, -quarter - spread),
+                          (right_image, quarter + spread)):
+            image.set_alpha(alpha)
+            surface.blit(image, image.get_rect(center=(int(center_x + dx), int(base_y))))

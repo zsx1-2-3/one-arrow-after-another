@@ -470,9 +470,15 @@ class Game:
                                                self.fly_travel(rect, result.arrow.direction)))
         elif result.kind == CLICK_BLOCKED:
             self.animations.append(anim.Impact(result.arrow, rect))
-            self.floats.append(anim.FloatingText(
-                "失去一心", (rect.centerx, rect.top - 2),
-                config.COLOR_DANGER, size=22, duration=1.1, rise=46))
+            # 扣生命值的提示是一颗「碎掉的像素心」，不是「失去一心」四个字：
+            # 生命值本身就用心的形状表示，心碎的画面一看就懂，
+            # 也不至于和「这里没有箭头」那句文字提示混成同一类消息。
+            # 心形是 10 格宽的像素图，宽度取 10 的整数倍，每格才是整数像素（见 ui.heart_surface）
+            self.floats.append(anim.FloatingHeart(
+                (rect.centerx, rect.centery - rect.height * 0.08),
+                color=config.COLOR_HP,
+                size=max(20, int(round(min(rect.width, rect.height) * 0.58 / 10.0)) * 10),
+                duration=1.15, rise=rect.height * 0.95))
             self.hp_lost_flash = 1.0        # 让刚失去的那颗心闪一下
         elif result.kind == CLICK_EMPTY:
             self.floats.append(anim.FloatingText(
@@ -580,14 +586,18 @@ class Game:
                      size=20, bold=True)
 
         rules = [
-            "① 点一下箭头，它就沿着自己的方向飞出棋盘并被消除。",
-            "② 如果它前方还有别的箭头挡路，就飞不出去，并且失去一心。",
-            "③ 清空本关所有箭头即可通关；生命值耗尽本关失败，可以重新开始。",
-            "④ 通关一关才会解锁下一关，进度会自动保存。",
+            ("① 点一下箭头，它就沿着自己的方向飞出棋盘并被消除。", False),
+            ("② 如果它前方还有别的箭头挡路，就飞不出去，并且失去", True),
+            ("③ 清空本关所有箭头即可通关；生命值耗尽本关失败，可以重新开始。", False),
+            ("④ 通关一关才会解锁下一关，进度会自动保存。", False),
         ]
-        for index, line in enumerate(rules):
-            ui.draw_text(self.screen, line, (card.x + 22, card.y + 48 + index * 25),
-                         size=15, color=config.COLOR_TEXT_DIM)
+        for index, (line, heart_icon) in enumerate(rules):
+            rect = ui.draw_text(self.screen, line, (card.x + 22, card.y + 48 + index * 25),
+                                size=15, color=config.COLOR_TEXT_DIM)
+            if heart_icon:
+                # 行尾直接画一颗像素心，而不是写「一心」两个字——
+                # 生命值就是用这个图形表示的，文字说明也照同一个写法走
+                self.draw_heart_icon(rect.right + 12, rect.centery)
 
         # 示例区：两种情形上下对照
         demo_y = card.y + 158
@@ -596,8 +606,8 @@ class Game:
                          (card.x + 22, divider), (card.right - 22, divider), 1)
 
         self.draw_demo_row(card.x + 24, demo_y, (">", "v", ".", "."),
-                           "「>」前方有箭头挡路 → 飞不出去，失去一心",
-                           config.COLOR_DANGER)
+                           "「>」前方有箭头挡路 → 飞不出去，并且失去",
+                           config.COLOR_DANGER, heart_icon=True)
         self.draw_demo_row(card.x + 24, demo_y + 56, (">", ".", ".", "."),
                            "「>」前方一路是空的 → 飞出棋盘并消失",
                            config.COLOR_SUCCESS)
@@ -606,7 +616,11 @@ class Game:
                      (card.x + 24, card.bottom - 28), size=13,
                      color=config.COLOR_TEXT_FAINT)
 
-    def draw_demo_row(self, x, y, cells, caption, color):
+    def draw_heart_icon(self, center_x, center_y, size=20):
+        """画一颗用作「生命值」字样的像素心（与 HUD、扣血动画同一套图形）。"""
+        ui.draw_heart(self.screen, (center_x, center_y), size, config.COLOR_HP)
+
+    def draw_demo_row(self, x, y, cells, caption, color, heart_icon=False):
         """画一行迷你棋盘（用于玩法说明里的示例）。"""
         side, gap = 30, 6
         for index, char in enumerate(cells):
@@ -619,8 +633,10 @@ class Game:
                 ui.draw_arrow(self.screen, rect.center, side * config.ARROW_RATIO, direction)
 
         text_x = x + len(cells) * (side + gap) + 14
-        ui.draw_text(self.screen, caption, (text_x, y + side // 2), size=15,
-                     color=color, anchor="midleft")
+        rect = ui.draw_text(self.screen, caption, (text_x, y + side // 2), size=15,
+                            color=color, anchor="midleft")
+        if heart_icon:
+            self.draw_heart_icon(rect.right + 12, rect.centery)
 
     # ---------------------------------------------------------------- 关卡总览
     def draw_levels(self):
@@ -730,10 +746,11 @@ class Game:
         ui.draw_text(self.screen, str(self.board.remaining), (300, 46),
                      size=32, color=config.COLOR_ACCENT, bold=True)
 
-        # 剩余生命值：实心心 = 还能错几次，空心心 = 已经失去的那几颗
+        # 剩余生命值：实心像素心 = 还能错几次，只剩轮廓的 = 已经失去的那几颗
         ui.draw_text(self.screen, "剩余生命值", (420, 24), size=15, color=config.COLOR_TEXT_DIM)
         hp = self.board.hp_left
-        heart_size, heart_gap = 18, 7
+        # 心形是 10 格宽的像素图，宽度取 20 时每格正好 2 像素，缩放后粗细均匀
+        heart_size, heart_gap = 20, 8
         # 刚失去的那颗心套一圈短暂的红色脉冲——点错时一眼看出是哪颗心没了
         if self.hp_lost_flash > 0.0 and hp < self.board.max_hp:
             center = (420 + heart_size / 2.0 + hp * (heart_size + heart_gap), 66)

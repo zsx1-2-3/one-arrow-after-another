@@ -187,53 +187,73 @@ def draw_check(surface, center, size, color=None):
     pygame.draw.lines(surface, color, False, points, max(2, int(size * 0.20)))
 
 
-# 心形参数曲线（单位形状，已居中原点并归一化到宽 1.0）
-_HEART_SHAPE = None
+# ------------------------------------------------------------------ 生命值（像素心）
+# 生命值图标是一颗「像素心」：不写汉字、也不是圆滑的矢量心形，
+# 和整套界面的像素箭头是同一种质感（图形定义见 config.HEART_PIXEL_ART）。
+_heart_cache = {}
+HEART_COLS = len(config.HEART_PIXEL_ART[0])
+HEART_ROWS = len(config.HEART_PIXEL_ART)
+HEART_ASPECT = HEART_ROWS / float(HEART_COLS)
 
 
-def _heart_shape():
-    """心形单位顶点序列：宽 1.0、居中原点。只算一次。"""
-    global _HEART_SHAPE
-    if _HEART_SHAPE is not None:
-        return _HEART_SHAPE
-
-    samples = 72
-    raw = []
-    for index in range(samples):
-        angle = index * 2 * math.pi / samples
-        # 经典心形参数方程；屏幕坐标 y 轴向下，所以取负
-        x = 16 * math.sin(angle) ** 3
-        y = (13 * math.cos(angle) - 5 * math.cos(2 * angle)
-             - 2 * math.cos(3 * angle) - math.cos(4 * angle))
-        raw.append((x, -y))
-    xs = [point[0] for point in raw]
-    ys = [point[1] for point in raw]
-    scale = 1.0 / max(1e-6, max(xs) - min(xs))
-    mid_x = (max(xs) + min(xs)) / 2.0
-    mid_y = (max(ys) + min(ys)) / 2.0
-    _HEART_SHAPE = [((x - mid_x) * scale, (y - mid_y) * scale) for x, y in raw]
-    return _HEART_SHAPE
+def _heart_is_edge(col, row):
+    """这个格子是否处在图案外沿（上下左右有一个不是实心格）。"""
+    art = config.HEART_PIXEL_ART
+    for d_col, d_row in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        c, r = col + d_col, row + d_row
+        if not (0 <= c < HEART_COLS and 0 <= r < HEART_ROWS):
+            return True
+        if art[r][c] != "#":
+            return True
+    return False
 
 
-def heart_points(center, size):
-    """心形在屏幕上的顶点序列，size 为宽度（高度约为 0.9×size）。"""
-    return [(center[0] + x * size, center[1] + y * size) for x, y in _heart_shape()]
+def heart_surface(width, color, filled=True):
+    """预渲染一颗像素心，按「宽度 + 颜色 + 是否实心」缓存。
 
-
-def draw_heart(surface, center, size, color, filled=True):
-    """画一颗心（生命值图标）。
-
-    filled=True 表示还剩的生命值；filled=False 只描边，表示已经失去的那一点。
+    filled=False 是已经失去的那一颗：只保留外沿像素、内部镂空，
+    和对面的实心心一对比就知道还剩几点生命值。
     """
-    points = heart_points(center, size)
-    if filled:
-        pygame.draw.polygon(surface, color, points)
-    else:
-        pygame.draw.polygon(surface, color, points, max(2, int(size * 0.11)))
+    key = (int(width), tuple(color), bool(filled))
+    cached = _heart_cache.get(key)
+    if cached is not None:
+        return cached
+
+    width = max(HEART_COLS, int(width))
+    height = max(HEART_ROWS, int(round(width * HEART_ASPECT)))
+    surface = pygame.Surface((width, height), pygame.SRCALPHA)
+    art = config.HEART_PIXEL_ART
+
+    # 先把网格边界圆整成整数像素再画矩形：每格都落在整数像素上，
+    # 相邻格之间不会因为浮点误差留下 1px 细缝。
+    xs = [int(round(col * width / float(HEART_COLS))) for col in range(HEART_COLS + 1)]
+    ys = [int(round(row * height / float(HEART_ROWS))) for row in range(HEART_ROWS + 1)]
+    for row in range(HEART_ROWS):
+        for col in range(HEART_COLS):
+            if art[row][col] != "#":
+                continue
+            if not filled and not _heart_is_edge(col, row):
+                continue
+            rect = pygame.Rect(xs[col], ys[row],
+                               max(1, xs[col + 1] - xs[col]),
+                               max(1, ys[row + 1] - ys[row]))
+            pygame.draw.rect(surface, tuple(color), rect)
+
+    _heart_cache[key] = surface
+    return surface
 
 
-def draw_hearts(surface, left_center, current, total, size=18, gap=6):
-    """从左往右排一排心：前 current 颗实心，其余空心。返回整排宽度。
+def draw_heart(surface, center, width, color, filled=True, alpha=255):
+    """在 center 处画一颗像素心（width 为心形宽度）。"""
+    image = heart_surface(width, color, filled)
+    if alpha < 255:
+        image = image.copy()
+        image.set_alpha(int(alpha))
+    surface.blit(image, image.get_rect(center=(int(center[0]), int(center[1]))))
+
+
+def draw_hearts(surface, left_center, current, total, size=20, gap=8):
+    """从左往右排一排心：前 current 颗实心，其余只剩轮廓。返回整排宽度。
 
     生命值按「还剩几点」显示，所以从左往右依次点亮，
     剩下的空位就是已经失去的生命值——玩家一眼能看出还能错几次。
@@ -395,7 +415,7 @@ _glow_cache = {}
 
 
 def clear_caches():
-    """清空字体 / 箭头 / 光晕贴图的缓存。
+    """清空字体 / 箭头 / 像素心 / 光晕贴图的缓存。
 
     什么时候需要它：pygame.quit() 之后又重新 init 的场景（比如测试里一个用例组
     退出 pygame、下一个用例组还要画图）。缓存里的 Font 与 Surface 在 quit 时
@@ -404,6 +424,7 @@ def clear_caches():
     """
     _font_cache.clear()
     _arrow_cache.clear()
+    _heart_cache.clear()
     _glow_cache.clear()
 
 
