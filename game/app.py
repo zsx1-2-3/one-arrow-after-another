@@ -30,14 +30,16 @@ OVERLAY_FAIL = "fail"
 OVERLAY_ALL_CLEAR = "allclear"
 
 # ---------------------------------------------------------------- 关卡总览布局
-CARD_COLUMNS = 4
-CARD_WIDTH = 196
+# 9 关正好排成 3 × 3；用 4 列的话会变成 4 + 4 + 1，最后一行孤零零一张卡。
+CARD_COLUMNS = 3
+CARD_WIDTH = 264
 CARD_HEIGHT = 104
 CARD_GAP_X = 20
 CARD_GAP_Y = 14
 CARDS_TOP = 142
 
 TOAST_DURATION = 2.0        # 提示气泡停留时间（秒）
+HP_FLASH_DURATION = 0.9     # 刚失去一颗心时，HUD 上那颗心的闪烁时长（秒）
 
 
 class Game:
@@ -109,6 +111,7 @@ class Game:
         self.hover_cell = None
         self.hover_card = None
         self.reset_armed = False
+        self.hp_lost_flash = 0.0
         self.animations.clear()
         self.floats.clear()
         # 提示气泡属于上一屏的上下文，换场景时一起清掉，
@@ -468,8 +471,9 @@ class Game:
         elif result.kind == CLICK_BLOCKED:
             self.animations.append(anim.Impact(result.arrow, rect))
             self.floats.append(anim.FloatingText(
-                "被挡住了 -1 生命值", (rect.centerx, rect.top - 2),
-                config.COLOR_DANGER, size=20, duration=1.0, rise=44))
+                "失去一心", (rect.centerx, rect.top - 2),
+                config.COLOR_DANGER, size=22, duration=1.1, rise=46))
+            self.hp_lost_flash = 1.0        # 让刚失去的那颗心闪一下
         elif result.kind == CLICK_EMPTY:
             self.floats.append(anim.FloatingText(
                 "这里没有箭头", (rect.centerx, rect.centery - 18),
@@ -502,6 +506,9 @@ class Game:
 
         if self.toast_timer > 0:
             self.toast_timer = max(0.0, self.toast_timer - dt)
+
+        if self.hp_lost_flash > 0.0:
+            self.hp_lost_flash = max(0.0, self.hp_lost_flash - dt / HP_FLASH_DURATION)
 
         if self.scene == SCENE_PLAY and self.board is not None and self.overlay is None:
             if self.board.state in (STATE_CLEARED, STATE_FAILED):
@@ -574,7 +581,7 @@ class Game:
 
         rules = [
             "① 点一下箭头，它就沿着自己的方向飞出棋盘并被消除。",
-            "② 如果它前方还有别的箭头挡路，就飞不出去，并且扣掉 1 点生命值。",
+            "② 如果它前方还有别的箭头挡路，就飞不出去，并且失去一心。",
             "③ 清空本关所有箭头即可通关；生命值耗尽本关失败，可以重新开始。",
             "④ 通关一关才会解锁下一关，进度会自动保存。",
         ]
@@ -589,7 +596,7 @@ class Game:
                          (card.x + 22, divider), (card.right - 22, divider), 1)
 
         self.draw_demo_row(card.x + 24, demo_y, (">", "v", ".", "."),
-                           "「>」前方有箭头挡路 → 飞不出去，扣 1 点生命值",
+                           "「>」前方有箭头挡路 → 飞不出去，失去一心",
                            config.COLOR_DANGER)
         self.draw_demo_row(card.x + 24, demo_y + 56, (">", ".", ".", "."),
                            "「>」前方一路是空的 → 飞出棋盘并消失",
@@ -723,11 +730,17 @@ class Game:
         ui.draw_text(self.screen, str(self.board.remaining), (300, 46),
                      size=32, color=config.COLOR_ACCENT, bold=True)
 
-        # 剩余生命值：实心心 = 还能错几次，空心心 = 已经扣掉的那几点
+        # 剩余生命值：实心心 = 还能错几次，空心心 = 已经失去的那几颗
         ui.draw_text(self.screen, "剩余生命值", (420, 24), size=15, color=config.COLOR_TEXT_DIM)
         hp = self.board.hp_left
+        heart_size, heart_gap = 18, 7
+        # 刚失去的那颗心套一圈短暂的红色脉冲——点错时一眼看出是哪颗心没了
+        if self.hp_lost_flash > 0.0 and hp < self.board.max_hp:
+            center = (420 + heart_size / 2.0 + hp * (heart_size + heart_gap), 66)
+            ui.draw_glow(self.screen, center, 22, (176, 56, 56),
+                         self.hp_lost_flash, falloff=1.7)
         width = ui.draw_hearts(self.screen, (420, 66), hp, self.board.max_hp,
-                               size=18, gap=7)
+                               size=heart_size, gap=heart_gap)
         ui.draw_text(self.screen, "%d / %d" % (hp, self.board.max_hp),
                      (420 + width + 10, 66), size=18, color=config.COLOR_TEXT_DIM,
                      anchor="midleft")
@@ -803,9 +816,7 @@ class Game:
                     side = rect.width * config.ARROW_RATIO
                     if self.hover_cell == (row, col):
                         side *= 1.0 + 0.06 * hover_pulse     # 悬停时轻轻放大一点
-                    # 同向箭头按格子坐标取不同明暗变体，避免成片同色糊成一块
-                    ui.draw_arrow(self.screen, rect.center, side, arrow.direction,
-                                  variant=ui.arrow_variant(row, col))
+                    ui.draw_arrow(self.screen, rect.center, side, arrow.direction)
 
         # 悬停路径上的流光：一颗亮点从箭头出发跑到被挡处，循环播放
         if len(path_centers) > 1:

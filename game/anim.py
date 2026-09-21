@@ -25,9 +25,8 @@ class FlyOut:
 
     def __init__(self, arrow, cell_rect, travel, duration=config.FLY_DURATION):
         self.direction = arrow.direction
-        # 用和棋盘上完全相同的那个变体色，否则箭头一飞出去就"换了个颜色"
-        self.color = ui.arrow_color(arrow.direction,
-                                    ui.arrow_variant(arrow.row, arrow.col))
+        # 用和棋盘上完全相同的颜色，否则箭头一飞出去就"换了个颜色"
+        self.color = ui.arrow_color(arrow.direction)
         self.side = min(cell_rect.width, cell_rect.height) * config.ARROW_RATIO
         self.start = pygame.Vector2(cell_rect.center)
         self.vector = _unit_vector(self.direction)
@@ -63,8 +62,7 @@ class Impact:
 
     def __init__(self, arrow, cell_rect, duration=config.IMPACT_DURATION):
         self.direction = arrow.direction
-        self.color = ui.arrow_color(arrow.direction,
-                                    ui.arrow_variant(arrow.row, arrow.col))
+        self.color = ui.arrow_color(arrow.direction)
         cell_size = min(cell_rect.width, cell_rect.height)
         self.cell_size = cell_size
         self.side = cell_size * config.ARROW_RATIO

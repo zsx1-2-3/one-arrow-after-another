@@ -345,23 +345,13 @@ def _build_arrow(side, color, direction):
     return surface
 
 
-def arrow_variant(row, col):
-    """按格子坐标给箭头挑一个明暗变体（0 ~ DIR_VARIANTS-1）。
+def arrow_color(direction):
+    """取某个方向对应的箭头颜色。
 
-    生成器造出的关卡里同向箭头常常成片相邻，全用一个颜色会糊成色块。
-    这里用 (行×3 + 列×5) % 4：3 与 5 都和 4 互质，所以**上下左右相邻的两个格子
-    必定落在不同变体上**，色块被打散；变体只改明暗不改色相，方向依然一眼可辨。
-    变体和「这支箭头现在能不能点」无关，不会泄露解法。
+    一个方向就是唯一一个颜色：同方向的箭头在画面上完全一致，
+    不会出现有的深有的浅。四个方向的颜色亮度是拉平的（见 config.DIR_COLORS）。
     """
-    return (row * 3 + col * 5) % config.DIR_VARIANTS
-
-
-def arrow_color(direction, variant=0):
-    """取某个方向、某个变体对应的颜色。"""
-    palette = config.DIR_PALETTES.get(direction)
-    if not palette:
-        return config.DIR_COLORS[direction]
-    return palette[variant % len(palette)]
+    return config.DIR_COLORS[direction]
 
 
 def arrow_surface(side, color, direction):
@@ -373,13 +363,10 @@ def arrow_surface(side, color, direction):
     return cached
 
 
-def draw_arrow(surface, center, side, direction, color=None, alpha=255, variant=0):
-    """在 center（屏幕坐标）处画一个箭头。
-
-    color 传 None 时按「方向 + 变体」自动取色（变体用来打散同色箭头）。
-    """
+def draw_arrow(surface, center, side, direction, color=None, alpha=255):
+    """在 center（屏幕坐标）处画一个箭头，color 传 None 时按方向自动取色。"""
     if color is None:
-        color = arrow_color(direction, variant)
+        color = arrow_color(direction)
     image = arrow_surface(side, color, direction)
     if alpha < 255:
         image = image.copy()
