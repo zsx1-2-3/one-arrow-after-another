@@ -1,0 +1,202 @@
+# -*- coding: utf-8 -*-
+"""界面绘制工具：字体、文字、按钮、箭头图形。
+
+所有函数都只依赖 Surface 与普通数值，因此 app.py 与截图脚本可以复用同一套绘制代码。
+"""
+
+import os
+
+import pygame
+
+from . import config
+
+_font_cache = {}
+_arrow_cache = {}
+
+
+# ------------------------------------------------------------------ 字体
+def font_file(bold=False):
+    """返回第一个存在的中文字体文件路径；都没找到返回 None。"""
+    for path in (config.FONT_BOLD_PATHS if bold else config.FONT_PATHS):
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def has_cjk_font():
+    """是否成功找到中文字体（找不到时中文会显示成方块）。"""
+    return font_file(False) is not None
+
+
+def get_font(size, bold=False):
+    """按字号缓存字体对象，避免每帧重复加载。"""
+    key = (int(size), bool(bold))
+    cached = _font_cache.get(key)
+    if cached is not None:
+        return cached
+
+    path = font_file(bold)
+    if path:
+        font = pygame.font.Font(path, int(size))
+    else:
+        # 兜底：pygame 自带字体（不支持中文，仅保证程序不崩溃）
+        font = pygame.font.Font(None, int(size))
+        font.set_bold(bold)
+
+    _font_cache[key] = font
+    return font
+
+
+# ------------------------------------------------------------------ 文字
+def draw_text(surface, text, pos, size=22, color=config.COLOR_TEXT, bold=False, anchor="topleft"):
+    """绘制一行文字，anchor 用法同 pygame.Rect（topleft / center / midleft ...）。"""
+    image = get_font(size, bold).render(str(text), True, color)
+    rect = image.get_rect(**{anchor: pos})
+    surface.blit(image, rect)
+    return rect
+
+
+def text_width(text, size=22, bold=False):
+    return get_font(size, bold).size(str(text))[0]
+
+
+# ------------------------------------------------------------------ 基础图形
+def draw_round_rect(surface, rect, color, radius=12, width=0):
+    pygame.draw.rect(surface, color, rect, width, border_radius=radius)
+
+
+def draw_round_rect_alpha(surface, rect, color, alpha, radius=12, width=0):
+    """带透明度的圆角矩形（用于路径高亮、遮罩等）。"""
+    layer = pygame.Surface(rect.size, pygame.SRCALPHA)
+    pygame.draw.rect(layer, tuple(color) + (int(alpha),), layer.get_rect(), width, border_radius=radius)
+    surface.blit(layer, rect.topleft)
+
+
+def make_vertical_gradient(size, top_color, bottom_color):
+    """生成竖直渐变背景（只在启动时生成一次）。"""
+    width, height = size
+    surface = pygame.Surface(size)
+    for y in range(height):
+        ratio = y / max(1, height - 1)
+        color = tuple(int(a + (b - a) * ratio) for a, b in zip(top_color, bottom_color))
+        pygame.draw.line(surface, color, (0, y), (width, y))
+    return surface
+
+
+# ------------------------------------------------------------------ 箭头
+def _arrow_shape(surface, center, side, color):
+    """在 surface 上画一个「朝右」的箭头图形。"""
+    cx, cy = center
+    half = side / 2.0
+    joint = cx + half * 0.08                      # 箭杆与箭头的交界 x 坐标
+    shaft_left = cx - half
+    shaft_height = side * 0.24
+
+    pygame.draw.rect(
+        surface,
+        color,
+        pygame.Rect(int(shaft_left), int(cy - shaft_height / 2),
+                    int(joint - shaft_left), int(shaft_height)),
+        border_radius=max(1, int(side * 0.11)),
+    )
+    pygame.draw.polygon(
+        surface,
+        color,
+        [
+            (int(cx + half), int(cy)),
+            (int(joint), int(cy - side * 0.30)),
+            (int(joint), int(cy + side * 0.30)),
+        ],
+    )
+
+
+def _build_arrow(side, color, direction):
+    """生成某种颜色/方向的箭头贴图：先画朝右的，再整体旋转。"""
+    pad = max(3, int(side * 0.14))
+    size = int(side) + pad * 2
+    surface = pygame.Surface((size, size), pygame.SRCALPHA)
+    center = (size / 2.0, size / 2.0)
+    shadow = tuple(max(0, int(value * 0.5)) for value in color)
+
+    # 先画一层深色描边/阴影，让箭头有立体感
+    _arrow_shape(surface, (center[0] + 1.5, center[1] + 2.5), side, shadow)
+    _arrow_shape(surface, center, side, color)
+
+    angle = {"right": 0, "up": 90, "left": 180, "down": -90}[direction]
+    if angle:
+        surface = pygame.transform.rotate(surface, angle)
+    return surface
+
+
+def arrow_surface(side, color, direction):
+    key = (int(side), tuple(color), direction)
+    cached = _arrow_cache.get(key)
+    if cached is None:
+        cached = _build_arrow(key[0], tuple(color), direction)
+        _arrow_cache[key] = cached
+    return cached
+
+
+def draw_arrow(surface, center, side, direction, color=None, alpha=255):
+    """在 center（屏幕坐标）处画一个箭头。"""
+    if color is None:
+        color = config.DIR_COLORS[direction]
+    image = arrow_surface(side, color, direction)
+    if alpha < 255:
+        image = image.copy()
+        image.set_alpha(int(alpha))
+    surface.blit(image, image.get_rect(center=(int(center[0]), int(center[1]))))
+
+
+def mix_color(color_a, color_b, ratio):
+    """按比例混合两种颜色，ratio=0 取 color_a，ratio=1 取 color_b。"""
+    ratio = max(0.0, min(1.0, ratio))
+    return tuple(int(a + (b - a) * ratio) for a, b in zip(color_a, color_b))
+
+
+# ------------------------------------------------------------------ 按钮
+BUTTON_STYLES = {
+    "primary": {"bg": (70, 130, 226), "bg_hover": (98, 160, 250), "edge": (126, 184, 255), "text": (255, 255, 255)},
+    "ghost": {"bg": (34, 42, 68), "bg_hover": (50, 62, 96), "edge": (62, 76, 116), "text": (206, 218, 240)},
+    "success": {"bg": (50, 158, 106), "bg_hover": (68, 186, 124), "edge": (110, 224, 156), "text": (255, 255, 255)},
+    "danger": {"bg": (172, 68, 68), "bg_hover": (200, 88, 88), "edge": (240, 126, 126), "text": (255, 255, 255)},
+    "level": {"bg": (32, 40, 64), "bg_hover": (48, 60, 96), "edge": (60, 74, 112), "text": (232, 238, 250)},
+}
+
+
+class Button:
+    """矩形按钮：由上层（app.py）决定点击后做什么。"""
+
+    def __init__(self, rect, label, on_click=None, style="primary", size=22, sub=""):
+        self.rect = pygame.Rect(rect)
+        self.label = label
+        self.sub = sub
+        self.on_click = on_click
+        self.style = style
+        self.size = size
+        self.enabled = True
+        self.hovered = False
+
+    def hit(self, pos):
+        return self.enabled and self.rect.collidepoint(pos)
+
+    def draw(self, surface):
+        style = BUTTON_STYLES[self.style]
+        hovered = self.hovered and self.enabled
+        background = style["bg_hover"] if hovered else style["bg"]
+        edge = style["edge"] if self.enabled else (68, 74, 96)
+        text_color = style["text"] if self.enabled else (118, 126, 148)
+
+        draw_round_rect(surface, self.rect, background, radius=12)
+        draw_round_rect(surface, self.rect, edge, radius=12, width=2)
+        if hovered:
+            draw_round_rect_alpha(surface, self.rect, (255, 255, 255), 20, radius=12)
+
+        if self.sub:
+            draw_text(surface, self.label, (self.rect.centerx, self.rect.centery - 13),
+                      size=self.size, color=text_color, bold=True, anchor="center")
+            draw_text(surface, self.sub, (self.rect.centerx, self.rect.centery + 16),
+                      size=15, color=config.COLOR_TEXT_DIM, anchor="center")
+        else:
+            draw_text(surface, self.label, self.rect.center,
+                      size=self.size, color=text_color, bold=True, anchor="center")
