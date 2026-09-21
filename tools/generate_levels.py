@@ -21,11 +21,24 @@
     free0   开局可以直接飞出的箭头数（越少越难）
     avg     通关全程「当前可选择数」的平均值（越小说明选择越少、越像被锁死）
     peak    全程可选数的最大值（越大说明能一路顺推，越简单）
+    density 箭头数 ÷ 格子数（同一尺寸下密度越高，需要扫视的箭头越多）
+
+**为什么难度不能只靠放大棋盘**：棋盘放大到 10×10 之后，能点的箭头也跟着变多，
+反而是靠「密度」——同样的棋盘里塞进更多箭头——才继续变难。但要注意一个陷阱：
+
+    贴着棋盘边缘、朝向棋盘外的箭头，射线长度是 0，永远能飞出去。
+
+如果不管它，密度一高，剩下的合法放置位置几乎只剩这类箭头，布局会退化成
+「一大半箭头开局就能点」的松局面（实测 9×9 放 54 支时开局可点 18 支，比稀疏时还简单）。
+所以放置时**除最后一步外一律避开射线为空的候选**，并用
+`seen × w_block + raylen × w_ray` 打分：既看「能挡住多少已放置的箭头」，
+也看「自己射线有多长」——射线越长，将来能被后续放置的箭头挡住的空间就越大。
+这样一来 9×9 放 50 支（密度 0.62）仍能把开局可点数压在 5 支左右。
 
 用法：
     python tools/generate_levels.py                     # 打印预设难度的候选
-    python tools/generate_levels.py -r 8 -c 8 -n 17 -k 5 --seed 2026
-    python tools/generate_levels.py --ascii -r 7 -c 7 -n 12 -k 1
+    python tools/generate_levels.py -r 8 -c 8 -n 30 -k 5 --seed 2026
+    python tools/generate_levels.py --ascii -r 7 -c 7 -n 18 -k 1
 
 参数说明：
     -r/-c  行数 / 列数        -n  箭头数量        -k  输出前 k 个候选
@@ -45,15 +58,17 @@ CHAR = {"up": "^", "down": "v", "left": "<", "right": ">"}
 
 
 # ------------------------------------------------------------------ 生成
-def place_reverse(rows, cols, count, rng, density=0.85):
+def place_reverse(rows, cols, count, rng, bias=0.9, w_block=1.0, w_ray=3.0,
+                  forbid_empty_ray=True):
     """逆向放置 count 支箭头，返回 {'placement': [(r, c, dir), ...]}。
 
     placement[0] 是最后被消掉的箭头，placement[-1] 是开局第一个应该被点掉的箭头。
     返回 None 表示在给定尺寸下放不下这么多箭头。
 
-    难度倾向（density）：放置新箭头时，优先选「落在已有箭头正前方」的位置，
-    这样被挡住的老箭头需要等新箭头先飞走才能动，难度就上来了。
-    density=0 退化为纯随机（布局很松、开局几乎全都能飞）。
+    bias：有多大概率走「挑最优候选」的路子；剩下的小概率纯随机，保证布局多样。
+    w_block / w_ray：候选打分权重（挡住别人的价值 / 自己射线长度的价值）。
+    forbid_empty_ray：是否避开射线为空的候选（见文件开头的说明），
+        这类箭头贴着边朝外、永远能飞，是「高密度反而变简单」的元凶。
 
     实现要点：维护一张 seen 表——seen[r][c] 记录「有多少支已放置的箭头正前方会经过
     这个格子」，放置箭头时沿它的射线加一。这样判断某格会不会挡住别人就是 O(1)，
@@ -64,23 +79,25 @@ def place_reverse(rows, cols, count, rng, density=0.85):
     placement = []
     directions = list(DIRECTIONS)
 
-    for _ in range(count):
+    for step in range(count):
         samples = []
 
         def collect(row, col, direction):
-            """若合法就收集起来（含阻挡信息）。"""
+            """若合法就收集起来（含射线长度）。"""
             if (row, col) in placed:
                 return
             d_row, d_col = DIRECTIONS[direction]
             r, c = row + d_row, col + d_col
+            raylen = 0
             while 0 <= r < rows and 0 <= c < cols:
                 if (r, c) in placed:              # 正前方有已放置的箭头 -> 不合法
                     return
+                raylen += 1
                 r += d_row
                 c += d_col
-            samples.append((row, col, direction, seen[row][col]))
+            samples.append((row, col, direction, raylen))
 
-        for _ in range(60):                       # 随机采样
+        for _ in range(80):                       # 随机采样
             collect(rng.randrange(rows), rng.randrange(cols), rng.choice(directions))
 
         if not samples:                           # 兜底：全量扫描
@@ -91,10 +108,17 @@ def place_reverse(rows, cols, count, rng, density=0.85):
         if not samples:
             return None
 
-        if rng.random() < density:
-            # 优先选「挡住别人最多」的位置；并列时在前几名里随机，保证布局多样
-            samples.sort(key=lambda item: item[3], reverse=True)
-            pool = samples[:3]
+        # 射线为空的候选除最后一步外一律避开（见文件开头「为什么难度不能只靠放大棋盘」）
+        if forbid_empty_ray and step < count - 1:
+            non_empty = [item for item in samples if item[3] > 0]
+            if non_empty:
+                samples = non_empty
+
+        if rng.random() < bias:
+            # 优先选「挡住别人多 + 自己射线长」的位置；并列时在前几名里随机，保证布局多样
+            samples.sort(key=lambda item: seen[item[0]][item[1]] * w_block
+                         + item[3] * w_ray, reverse=True)
+            pool = samples[:4]
         else:
             pool = samples
         row, col, direction, _ = rng.choice(pool)
@@ -159,13 +183,15 @@ def difficulty(rows, cols, placement, stats):
 
     权重解释：
       * 箭头越多越难（+1.0 / 支）；
-      * 棋盘越大越难（铺得开才藏得住）；
+      * 密度越高越难（+30.0 / 单位密度）—— 同一块棋盘里塞得越满，
+        需要逐条扫视的射线越多，容错空间越小；
       * 开局能直接飞出的箭头越多越**简单**（-3.0 / 支，权重最大）；
       * 全程平均可选数越大越顺推、越简单（-1.5）；
       * 峰值可选数越大说明中途会出现「全都能点」的宽松时刻（-0.3）。
     """
+    density = len(placement) / float(rows * cols)
     return (len(placement) * 1.0
-            + (rows * cols) / 12.0
+            + density * 30.0
             - stats["free0"] * 3.0
             - stats["avg"] * 1.5
             - stats["peak"] * 0.3)
@@ -197,8 +223,9 @@ def describe_placement(placement):
 
 def show(rows, cols, placement, stats, index, verbose=False):
     row_spread, col_spread = spread(rows, cols, placement)
-    print("候选 %d   棋盘 %d×%d   箭头 %d 支   开局可点 %d   平均可选 %.2f   峰值 %d   铺开 %.0f%%/%.0f%%"
-          % (index, rows, cols, len(placement), stats["free0"], stats["avg"], stats["peak"],
+    print("候选 %d   棋盘 %d×%d   箭头 %d 支   密度 %.2f   开局可点 %d   平均可选 %.2f   峰值 %d   铺开 %.0f%%/%.0f%%"
+          % (index, rows, cols, len(placement), len(placement) / float(rows * cols),
+             stats["free0"], stats["avg"], stats["peak"],
              row_spread * 100, col_spread * 100))
     for line in to_ascii(rows, cols, placement):
         print("    " + " ".join(line))
@@ -207,14 +234,17 @@ def show(rows, cols, placement, stats, index, verbose=False):
         print("    全程可选数变化：" + str(stats["counts"]))
 
 
-def generate(rows, cols, count, keep, seed, attempts=900, density=0.85):
+def generate(rows, cols, count, keep, seed, attempts=900, bias=0.9,
+             w_block=1.0, w_ray=3.0, forbid_empty_ray=True):
     """多次随机尝试，返回按难度分（越高越难）排序的前 keep 个候选。"""
     rng = random.Random(seed)
     results = []
     seen = set()
 
     for _ in range(attempts):
-        data = place_reverse(rows, cols, count, rng, density=density)
+        data = place_reverse(rows, cols, count, rng, bias=bias,
+                             w_block=w_block, w_ray=w_ray,
+                             forbid_empty_ray=forbid_empty_ray)
         if data is None:
             continue
         placement = data["placement"]
@@ -241,18 +271,19 @@ def generate(rows, cols, count, keep, seed, attempts=900, density=0.85):
 
 
 PRESETS = [
-    # (行, 列, 箭头数)  —— 递进的难度阶梯
-    (5, 5, 6),
-    (6, 6, 8),
-    (6, 7, 10),
-    (7, 7, 12),
-    (7, 8, 14),
-    (8, 8, 17),
-    (8, 9, 19),
-    (9, 9, 22),
-    (9, 10, 24),
-    (10, 10, 27),
-    (10, 10, 30),
+    # (行, 列, 箭头数) —— 棋盘尺寸很快封顶（最多 9×9），难度主要靠**密度**往上走
+    # 括号里是密度 = 箭头数 ÷ 格子数
+    (5, 5, 6),        # 0.24
+    (6, 6, 9),        # 0.25
+    (6, 7, 12),       # 0.29
+    (7, 7, 15),       # 0.31
+    (7, 7, 18),       # 0.37
+    (8, 8, 24),       # 0.38
+    (8, 8, 30),       # 0.47
+    (9, 9, 35),       # 0.43
+    (9, 9, 40),       # 0.49
+    (9, 9, 45),       # 0.56
+    (9, 9, 50),       # 0.62
 ]
 
 
@@ -264,8 +295,14 @@ def main():
     parser.add_argument("-k", "--keep", type=int, default=3, help="输出前几个候选")
     parser.add_argument("--seed", type=int, default=20260921)
     parser.add_argument("--attempts", type=int, default=900, help="每个难度档位的随机尝试次数")
-    parser.add_argument("--density", type=float, default=0.85,
-                        help="制造阻挡的倾向，0=纯随机，1=总是优先挡住别人")
+    parser.add_argument("--bias", type=float, default=0.9,
+                        help="走「挑最优候选」的概率，0=纯随机，1=总是挑最优")
+    parser.add_argument("--w-block", type=float, default=1.0,
+                        help="候选打分里「挡住别人」的权重")
+    parser.add_argument("--w-ray", type=float, default=3.0,
+                        help="候选打分里「自己射线长度」的权重")
+    parser.add_argument("--allow-empty-ray", action="store_true",
+                        help="允许放置射线为空的箭头（默认禁止，见文件开头说明）")
     parser.add_argument("--ascii", action="store_true", help="只输出 ASCII 布局，便于复制")
     args = parser.parse_args()
 
@@ -277,10 +314,12 @@ def main():
     for spec_index, (rows, cols, count) in enumerate(specs, start=1):
         seed = args.seed + spec_index * 977
         results = generate(rows, cols, count, args.keep, seed,
-                           attempts=args.attempts, density=args.density)
+                           attempts=args.attempts, bias=args.bias,
+                           w_block=args.w_block, w_ray=args.w_ray,
+                           forbid_empty_ray=not args.allow_empty_ray)
         print("=" * 78)
-        print("难度档位 %d：%d×%d，目标 %d 支箭头（%d 个候选）"
-              % (spec_index, rows, cols, count, len(results)))
+        print("难度档位 %d：%d×%d，目标 %d 支箭头（密度 %.2f，%d 个候选）"
+              % (spec_index, rows, cols, count, count / float(rows * cols), len(results)))
         print("=" * 78)
         if not results:
             print("  没能在该尺寸下放下这么多箭头，请调小 -n 或放大 -r/-c。")
