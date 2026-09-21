@@ -5,8 +5,8 @@
   * 棋盘是 rows × cols 的网格，格子中可能有「上/下/左/右」四个方向之一的箭头；
   * 点击一个箭头后，沿着它指向的方向（同一行或同一列）一直检查到棋盘边界；
       - 路径上没有其它箭头  -> 该箭头飞出棋盘并被消除；
-      - 路径上存在其它箭头  -> 不能消除，消耗一次失误机会；
-  * 全部箭头消除 -> 通关；失误次数耗尽 -> 失败。
+      - 路径上存在其它箭头  -> 不能消除，扣 1 点生命值；
+  * 全部箭头消除 -> 通关；生命值耗尽 -> 失败。
 """
 
 from dataclasses import dataclass, field
@@ -30,7 +30,7 @@ STATE_FAILED = "failed"
 
 # 点击结果类型
 CLICK_FLY = "fly"          # 前方无阻挡，箭头飞出
-CLICK_BLOCKED = "blocked"  # 前方有阻挡，不能飞出（消耗失误）
+CLICK_BLOCKED = "blocked"  # 前方有阻挡，不能飞出（扣 1 点生命值）
 CLICK_EMPTY = "empty"      # 点到了空格子
 CLICK_IGNORED = "ignored"  # 本关已结束 / 点到棋盘外
 
@@ -64,11 +64,11 @@ class Board:
     """一局游戏的棋盘状态。"""
 
     def __init__(self, level):
-        # level 只需提供 rows / cols / arrows / max_mistakes 四个属性
+        # level 只需提供 rows / cols / arrows / max_hp 四个属性
         self.level = level
         self.rows = level.rows
         self.cols = level.cols
-        self.max_mistakes = level.max_mistakes
+        self.max_hp = level.max_hp
         self.reset()
 
     # ------------------------------------------------------------ 初始化
@@ -83,15 +83,15 @@ class Board:
 
         self.total = len(self.arrows)   # 本关箭头总数
         self.remaining = self.total     # 剩余箭头数
-        self.mistakes = 0               # 已使用的失误次数
+        self.hp = self.max_hp           # 剩余生命值（点错一次扣 1 点）
         self.state = STATE_PLAYING
         self.history = []               # 已经飞出的箭头，便于复盘/测试
 
     # ------------------------------------------------------------ 查询
     @property
-    def mistakes_left(self):
-        """剩余失误次数。"""
-        return self.max_mistakes - self.mistakes
+    def hp_left(self):
+        """剩余生命值。"""
+        return self.hp
 
     def in_bounds(self, row, col):
         return 0 <= row < self.rows and 0 <= col < self.cols
@@ -158,9 +158,9 @@ class Board:
                 self.state = STATE_CLEARED
             return ClickResult(CLICK_FLY, arrow, None, path)
 
-        # 情况二：前方有阻挡 -> 消耗一次失误
-        self.mistakes += 1
-        if self.mistakes >= self.max_mistakes:
+        # 情况二：前方有阻挡 -> 扣 1 点生命值
+        self.hp -= 1
+        if self.hp <= 0:
             self.state = STATE_FAILED
         return ClickResult(CLICK_BLOCKED, arrow, blocker, path)
 

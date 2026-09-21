@@ -465,7 +465,7 @@ class Game:
         elif result.kind == CLICK_BLOCKED:
             self.animations.append(anim.Impact(result.arrow, rect))
             self.floats.append(anim.FloatingText(
-                "被挡住了 -1 失误", (rect.centerx, rect.top - 2),
+                "被挡住了 -1 生命值", (rect.centerx, rect.top - 2),
                 config.COLOR_DANGER, size=20, duration=1.0, rise=44))
         elif result.kind == CLICK_EMPTY:
             self.floats.append(anim.FloatingText(
@@ -570,8 +570,8 @@ class Game:
 
         rules = [
             "① 点一下箭头，它就沿着自己的方向飞出棋盘并被消除。",
-            "② 如果它前方还有别的箭头挡路，就飞不出去，并且扣掉 1 次失误。",
-            "③ 清空本关所有箭头即可通关；失误次数用完本关失败，可以重新开始。",
+            "② 如果它前方还有别的箭头挡路，就飞不出去，并且扣掉 1 点生命值。",
+            "③ 清空本关所有箭头即可通关；生命值耗尽本关失败，可以重新开始。",
             "④ 通关一关才会解锁下一关，进度会自动保存。",
         ]
         for index, line in enumerate(rules):
@@ -585,7 +585,7 @@ class Game:
                          (card.x + 22, divider), (card.right - 22, divider), 1)
 
         self.draw_demo_row(card.x + 24, demo_y, (">", "v", ".", "."),
-                           "「>」前方有箭头挡路 → 飞不出去，扣 1 次失误",
+                           "「>」前方有箭头挡路 → 飞不出去，扣 1 点生命值",
                            config.COLOR_DANGER)
         self.draw_demo_row(card.x + 24, demo_y + 56, (">", ".", ".", "."),
                            "「>」前方一路是空的 → 飞出棋盘并消失",
@@ -719,20 +719,13 @@ class Game:
         ui.draw_text(self.screen, str(self.board.remaining), (300, 46),
                      size=32, color=config.COLOR_ACCENT, bold=True)
 
-        # 剩余失误：实心圆 = 还能错几次，空心红圈 = 已经用掉的
-        ui.draw_text(self.screen, "剩余失误", (420, 24), size=15, color=config.COLOR_TEXT_DIM)
-        left = self.board.mistakes_left
-        step = 28
-        for index in range(self.board.max_mistakes):
-            center = (420 + 8 + index * step, 66)
-            if index < left:
-                color = config.COLOR_SUCCESS if left > 1 else config.COLOR_WARN
-                pygame.draw.circle(self.screen, color, center, 8)
-            else:
-                pygame.draw.circle(self.screen, config.COLOR_DANGER, center, 8, 3)
-        counter_x = 420 + self.board.max_mistakes * step + 6
-        ui.draw_text(self.screen, "%d / %d" % (left, self.board.max_mistakes),
-                     (counter_x, 66), size=18, color=config.COLOR_TEXT_DIM,
+        # 剩余生命值：实心心 = 还能错几次，空心心 = 已经扣掉的那几点
+        ui.draw_text(self.screen, "剩余生命值", (420, 24), size=15, color=config.COLOR_TEXT_DIM)
+        hp = self.board.hp_left
+        width = ui.draw_hearts(self.screen, (420, 66), hp, self.board.max_hp,
+                               size=18, gap=7)
+        ui.draw_text(self.screen, "%d / %d" % (hp, self.board.max_hp),
+                     (420 + width + 10, 66), size=18, color=config.COLOR_TEXT_DIM,
                      anchor="midleft")
 
     def draw_board(self):
@@ -849,7 +842,7 @@ class Game:
             desc = "第 %d 关「%s」的箭头全部飞出了棋盘" % (self.level_index + 1, self.level.name)
         elif self.overlay == OVERLAY_FAIL:
             title, color = "本关失败", config.COLOR_DANGER
-            desc = "失误次数已经用完，再试一次吧"
+            desc = "生命值已经耗尽，再试一次吧"
         else:
             title, color = "全部通关！", config.COLOR_SUCCESS
             desc = "%d 个关卡的箭头都被你清理干净了" % TOTAL_LEVELS
@@ -861,8 +854,8 @@ class Game:
 
         stats = [
             ("本关箭头", str(self.board.total)),
-            ("点错次数", str(self.board.mistakes)),
-            ("剩余失误", "%d / %d" % (self.board.mistakes_left, self.board.max_mistakes)),
+            ("点错次数", str(self.board.max_hp - self.board.hp_left)),
+            ("剩余生命值", "%d / %d" % (self.board.hp_left, self.board.max_hp)),
         ]
         box_w, box_h, gap = 150, 64, 12
         total = len(stats) * box_w + (len(stats) - 1) * gap

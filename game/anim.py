@@ -109,7 +109,7 @@ class Impact:
 
 
 class FloatingText:
-    """向上飘动并淡出的提示文字，例如「-1 失误」。"""
+    """向上飘动并淡出的提示文字，例如「-1 生命值」。"""
 
     def __init__(self, text, position, color=config.COLOR_TEXT, size=22,
                  duration=0.9, rise=40):

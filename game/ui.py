@@ -171,6 +171,70 @@ def draw_check(surface, center, size, color=None):
     pygame.draw.lines(surface, color, False, points, max(2, int(size * 0.20)))
 
 
+# 心形参数曲线（单位形状，已居中原点并归一化到宽 1.0）
+_HEART_SHAPE = None
+
+
+def _heart_shape():
+    """心形单位顶点序列：宽 1.0、居中原点。只算一次。"""
+    global _HEART_SHAPE
+    if _HEART_SHAPE is not None:
+        return _HEART_SHAPE
+
+    samples = 72
+    raw = []
+    for index in range(samples):
+        angle = index * 2 * math.pi / samples
+        # 经典心形参数方程；屏幕坐标 y 轴向下，所以取负
+        x = 16 * math.sin(angle) ** 3
+        y = (13 * math.cos(angle) - 5 * math.cos(2 * angle)
+             - 2 * math.cos(3 * angle) - math.cos(4 * angle))
+        raw.append((x, -y))
+    xs = [point[0] for point in raw]
+    ys = [point[1] for point in raw]
+    scale = 1.0 / max(1e-6, max(xs) - min(xs))
+    mid_x = (max(xs) + min(xs)) / 2.0
+    mid_y = (max(ys) + min(ys)) / 2.0
+    _HEART_SHAPE = [((x - mid_x) * scale, (y - mid_y) * scale) for x, y in raw]
+    return _HEART_SHAPE
+
+
+def heart_points(center, size):
+    """心形在屏幕上的顶点序列，size 为宽度（高度约为 0.9×size）。"""
+    return [(center[0] + x * size, center[1] + y * size) for x, y in _heart_shape()]
+
+
+def draw_heart(surface, center, size, color, filled=True):
+    """画一颗心（生命值图标）。
+
+    filled=True 表示还剩的生命值；filled=False 只描边，表示已经失去的那一点。
+    """
+    points = heart_points(center, size)
+    if filled:
+        pygame.draw.polygon(surface, color, points)
+    else:
+        pygame.draw.polygon(surface, color, points, max(2, int(size * 0.11)))
+
+
+def draw_hearts(surface, left_center, current, total, size=18, gap=6):
+    """从左往右排一排心：前 current 颗实心，其余空心。返回整排宽度。
+
+    生命值按「还剩几点」显示，所以从左往右依次点亮，
+    剩下的空位就是已经失去的生命值——玩家一眼能看出还能错几次。
+    """
+    step = size + gap
+    width = total * size + (total - 1) * gap
+    low = current <= 1
+    for index in range(total):
+        center = (left_center[0] + size / 2.0 + index * step, left_center[1])
+        if index < current:
+            draw_heart(surface, center, size,
+                       config.COLOR_HP_LOW if low else config.COLOR_HP, filled=True)
+        else:
+            draw_heart(surface, center, size, config.COLOR_HP_LOST, filled=False)
+    return width
+
+
 # ------------------------------------------------------------------ 基础图形
 def draw_round_rect(surface, rect, color, radius=12, width=0):
     pygame.draw.rect(surface, color, rect, width, border_radius=radius)
