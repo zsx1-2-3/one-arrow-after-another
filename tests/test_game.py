@@ -35,13 +35,13 @@ import deshuffle_levels  # noqa: E402
 from game import anim, bgfx, config, scoring, ui  # noqa: E402
 from game.app import (HUD_HEART_GAP, HUD_HEART_SIZE, HUD_HEARTS_X,  # noqa: E402
                       HUD_SCORE_LABEL_X, HUD_SCORE_VALUE_X,
-                      OVERLAY_ALL_CLEAR, OVERLAY_FAIL, OVERLAY_WIN,
-                      SCENE_LEVELS, SCENE_MENU, SCENE_PLAY, Game)
+                      OVERLAY_ALL_CLEAR, OVERLAY_FAIL, OVERLAY_TUTORIAL_DONE,
+                      OVERLAY_WIN, SCENE_LEVELS, SCENE_MENU, SCENE_PLAY, Game)
 from game.board import (CLICK_BLOCKED, CLICK_EMPTY, CLICK_FLY,  # noqa: E402
                         CLICK_IGNORED, STATE_CLEARED, STATE_FAILED,
                         STATE_PLAYING, Board, count_free_arrows, solve_level)
-from game.levels import (HP_BY_STARS, LEVELS, TOTAL_LEVELS, Level,  # noqa: E402
-                         tutorial_level_index)
+from game.levels import (HP_BY_STARS, LEVELS, TOTAL_LEVELS, TUTORIAL,  # noqa: E402
+                         Level)
 from game.progress import Progress  # noqa: E402
 
 FRAME = 1.0 / 60.0
@@ -203,10 +203,66 @@ class SolverTestCase(unittest.TestCase):
             self.assertEqual(board.remaining, 0)
 
     def test_level_count_and_difficulty_ramp(self):
-        """关卡数量够玩，且难度整体是递增的。"""
-        self.assertGreaterEqual(TOTAL_LEVELS, 9)
+        """关卡数量够玩，且难度整条曲线是递增的。"""
+        self.assertGreaterEqual(TOTAL_LEVELS, 8)
         scores = [level.difficulty_score for level in LEVELS]
         self.assertEqual(scores, sorted(scores), "难度分应当从左到右递增")
+
+    def test_levels_one_to_four_get_harder_step_by_step(self):
+        """第 1~4 关是入门段，难度必须一关比一关高，而且步子要看得出来。
+
+        教学关独立出去以后，这四关就是玩家真正开始的地方：
+        棋盘只许变大、箭头只许变多、开局能直接飞出的箭头只许变少，
+        难度分则必须严格上升。这条用例把「递增」从口头约定变成硬约束。
+        """
+        first_four = LEVELS[:4]
+        self.assertEqual(len(first_four), 4)
+        for index in range(len(first_four) - 1):
+            before, after = first_four[index], first_four[index + 1]
+            number = index + 2
+            self.assertLess(before.difficulty_score, after.difficulty_score,
+                            "第 %d 关（%.2f）并不比第 %d 关（%.2f）难"
+                            % (number, after.difficulty_score, number - 1,
+                               before.difficulty_score))
+            self.assertLessEqual(before.rows, after.rows,
+                                 "第 %d 关的棋盘不该比前一关矮" % number)
+            self.assertLessEqual(before.cols, after.cols,
+                                 "第 %d 关的棋盘不该比前一关窄" % number)
+            self.assertLessEqual(before.arrow_count, after.arrow_count,
+                                 "第 %d 关的箭头不该比前一关少" % number)
+            self.assertLessEqual(before.stars, after.stars,
+                                 "第 %d 关的星级不该比前一关低" % number)
+
+        # 第 2 关的招牌是「全场只有一支能飞」，这个数字要真的成立
+        self.assertEqual(LEVELS[1].free_count, 1)
+        self.assertGreaterEqual(LEVELS[0].free_count, 2)
+        self.assertNotEqual(LEVELS[0].layout, TUTORIAL.layout,
+                            "第 1 关不该和教学关长得一样")
+
+    def test_tutorial_is_not_a_numbered_level(self):
+        """教学关独立于关卡表：不占第 1 关的位置，也不参与编号。"""
+        self.assertTrue(TUTORIAL.tutorial)
+        self.assertGreater(len(TUTORIAL.steps), 0, "教学关必须带引导步骤")
+        self.assertFalse(any(level.tutorial for level in LEVELS),
+                         "编号关卡里不该再混进教学关")
+        self.assertFalse(any(level.steps for level in LEVELS),
+                         "编号关卡不该带教学引导步骤")
+        for level in LEVELS:
+            self.assertNotEqual(level.name, TUTORIAL.name)
+
+    def test_tutorial_is_solvable_and_playable(self):
+        """教学关自己也要可解、能一路点到通关。"""
+        board = Board(TUTORIAL)
+        for row, col in board.solution():
+            self.assertEqual(board.click(row, col).kind, CLICK_FLY,
+                             "教学关在 (%d,%d) 处卡住了" % (row, col))
+        self.assertEqual(board.state, STATE_CLEARED)
+
+    def test_tutorial_is_a_forgiving_sandbox(self):
+        """教学关是给人放胆点的沙盒，生命值要比同星级的关卡宽裕。"""
+        self.assertGreater(TUTORIAL.max_hp, HP_BY_STARS[TUTORIAL.stars],
+                           "教学关的生命值该比按星级给的更宽松，"
+                           "否则新手会在教程里就被判失败")
 
     def test_later_levels_gain_density_not_board_size(self):
         """后半段的难度不靠放大棋盘，而是靠提高密度。
@@ -237,8 +293,10 @@ class SolverTestCase(unittest.TestCase):
             self.assertLess(arrows[index], arrows[index + 1],
                             "第 %d 关起箭头数应当继续增加" % (index + 1))
 
-        # 最后一关的密度要明显高于刚开始加密的那一关
-        self.assertGreater(LEVELS[-1].density, LEVELS[5].density + 0.15)
+        # 最后一关的密度要明显高于棋盘封顶前的那一关。
+        # 参照关卡写成 frozen_at - 1（而不是硬编码的关号）：
+        # 教学关独立出去之后所有下标都前移了一位，写死下标会被这种改动坑到。
+        self.assertGreater(LEVELS[-1].density, LEVELS[frozen_at - 1].density + 0.10)
 
     def test_every_level_has_at_least_one_playable_arrow(self):
         """每个关卡开局都必须至少有一支能点的箭头，否则玩家一上手就是死局。"""
@@ -328,6 +386,13 @@ class LevelBalanceTestCase(unittest.TestCase):
                 % (index + 2, penalties[index + 1] * 100,
                    index + 1, penalties[index] * 100))
         self.assertLess(penalties[-1], penalties[0])
+
+    def test_star_ramp_starts_at_one_and_ends_at_five(self):
+        """星级从第 1 关的 1 星升到最后一关的 5 星（教学关不在这条链上）。"""
+        stars = [level.stars for level in LEVELS]
+        self.assertEqual(stars[0], 1)
+        self.assertEqual(stars[-1], 5)
+        self.assertEqual(stars[:4], [1, 2, 3, 3], "前四关的星级阶梯变了")
 
 
 class ScoringTestCase(unittest.TestCase):
@@ -637,11 +702,12 @@ class GameFlowTestCase(unittest.TestCase):
         self.assertEqual(self.game.board.remaining, LEVELS[0].arrow_count)
 
     def test_menu_explains_the_rules(self):
-        """主菜单必须有玩法说明与进入关卡总览的入口。"""
+        """主菜单必须有玩法说明，以及教学关 / 关卡总览 / 退出三个入口。"""
         labels = [button.label for button in self.game.buttons]
+        self.assertIn("教学关", labels)
         self.assertIn("关卡总览", labels)
         self.assertIn("退出游戏", labels)
-        self.assertEqual(len(self.game.buttons), 3)
+        self.assertEqual(len(self.game.buttons), 4)
 
     def test_primary_button_follows_progress(self):
         """主按钮文字会随进度变化：从「开始游戏」到「继续第 N 关」。"""
@@ -871,8 +937,8 @@ class GameFlowTestCase(unittest.TestCase):
     def test_t06_restart_mid_game(self):
         """T06 游戏进行中重新开始 -> 箭头布局和生命值都恢复。
 
-        用第 2 关（初次拉弓）来测：它同时存在「能飞」和「被挡住」的箭头，
-        在教学关里消掉一支之后会全部畅通，就扣不到生命值了。
+        用第 2 关（交叉路口）来测：它同时存在「能飞」和「被挡住」的箭头，
+        消掉那支能飞的之后仍有箭头被挡着，扣得到生命值。
         """
         game = self.game
         self.progress.mark_cleared(0)                    # 先解锁第 2 关
@@ -980,16 +1046,70 @@ class GameFlowTestCase(unittest.TestCase):
         self.assertFalse(game.is_unlocked(1))
 
     # ---------------------------------------------------------- 教学关
-    def test_tutorial_is_the_first_level(self):
-        """教学关排在第 1 关的位置，并且带引导步骤。"""
-        self.assertEqual(tutorial_level_index(), 0)
-        self.assertTrue(LEVELS[0].tutorial)
-        self.assertGreater(len(LEVELS[0].steps), 0)
+    def test_tutorial_has_its_own_entry_on_the_menu(self):
+        """教学关是菜单上的独立入口：不用解锁，点了就能进。"""
+        game = self.game
+        self.assertFalse(game.is_unlocked(1))            # 全新存档，第 2 关还锁着
+        button = [b for b in game.buttons if b.label == "教学关"][0]
+        game.handle_click(button.rect.center)
+
+        self.assertEqual(game.scene, SCENE_PLAY)
+        self.assertTrue(game.in_tutorial)
+        self.assertIs(game.level, TUTORIAL)
+        self.assertIsNot(game.level, LEVELS[0])
+        self.assertEqual(game.board.remaining, TUTORIAL.arrow_count)
+        game.draw()                                      # 教学关界面画得出来
+
+    def test_finishing_the_tutorial_scores_nothing(self):
+        """教学关走完：不进存档、不解锁、不算分，只引导去第 1 关。"""
+        game = self.game
+        self.assertTrue(game.start_tutorial())
+        for row, col in game.board.solution():
+            game.click_cell(row, col)
+        self.advance()
+
+        self.assertEqual(game.overlay, OVERLAY_TUTORIAL_DONE)
+        self.assertEqual(game.last_score, 0)
+        self.assertEqual(self.progress.cleared, set(), "教学关不该写进通关记录")
+        self.assertEqual(self.progress.total_score(TOTAL_LEVELS), 0)
+        self.assertFalse(game.is_unlocked(1), "教学关不该顺手解锁第 2 关")
+        self.assertIn("不计分", game.score_note()[0])
+        game.draw()
+
+        # 结算面板只给「开始第 1 关 / 再看一遍 / 关卡总览 / 返回主菜单」
+        labels = [button.label for button in game.buttons]
+        self.assertEqual(labels[0], "开始第 1 关")
+        self.assertNotIn("下一关", labels)
+        game.handle_click(game.buttons[0].rect.center)
+        self.assertFalse(game.in_tutorial)
+        self.assertEqual(game.level_index, 0)
+        self.assertEqual(game.scene, SCENE_PLAY)
+
+    def test_tutorial_can_be_failed_and_retried_without_penalty(self):
+        """教学关点光生命值也只是重来一遍：不记分、不锁关。"""
+        game = self.game
+        game.start_tutorial()
+        target = self.blocked_arrow(game.board)
+        for _ in range(game.board.max_hp):
+            game.click_cell(target.row, target.col)
+        self.advance()
+
+        self.assertEqual(game.overlay, OVERLAY_FAIL)
+        self.assertEqual(game.last_score, 0)
+        self.assertEqual(self.progress.cleared, set())
+        self.assertIn("教学关", game.score_note()[0])
+        game.draw()
+
+        restart = [b for b in game.buttons if b.label == "重新开始本关"][0]
+        game.handle_click(restart.rect.center)
+        self.assertEqual(game.board.state, STATE_PLAYING)
+        self.assertEqual(game.board.hp, game.board.max_hp)
+        self.assertTrue(game.in_tutorial)
 
     def test_tutorial_steps_advance_one_by_one(self):
         """照着引导点，步骤会一步步推进，最后引导结束。"""
         game = self.game
-        game.start_level(0)
+        game.start_tutorial()
         total_steps = len(game.level.steps)
         self.assertFalse(game.tutorial_done)
 
@@ -1010,7 +1130,7 @@ class GameFlowTestCase(unittest.TestCase):
     def test_tutorial_resyncs_when_player_deviates(self):
         """玩家不按提示点时，引导会自动跳过已经失效的步骤，而不是卡住。"""
         game = self.game
-        game.start_level(0)
+        game.start_tutorial()
         first = game.current_step
         self.assertEqual(first.expect, "blocked")
 
@@ -1029,7 +1149,7 @@ class GameFlowTestCase(unittest.TestCase):
     def test_tutorial_ring_only_drawn_for_current_step(self):
         """引导高亮只在教学关且步骤未走完时出现（顺带覆盖绘制代码）。"""
         game = self.game
-        game.start_level(0)
+        game.start_tutorial()
         self.assertIsNotNone(game.current_step)
         game.draw()
         for row, col in game.board.solution():
@@ -1040,7 +1160,7 @@ class GameFlowTestCase(unittest.TestCase):
 
     # ---------------------------------------------------------- 全关卡回归
     def test_all_levels_can_be_cleared_in_order(self):
-        """按顺序把 9 关全部打通，验证解锁链路与关卡数据整体可用。"""
+        """按顺序把 8 关全部打通，验证解锁链路与关卡数据整体可用。"""
         game = self.game
         for index in range(TOTAL_LEVELS):
             self.assertTrue(game.start_level(index),
@@ -1136,7 +1256,8 @@ class VisualVarietyTestCase(unittest.TestCase):
 
     def test_wrap_text_keeps_punctuation_off_line_start(self):
         """折行后不允许有行以收尾标点开头（中文排版的基本要求）。"""
-        texts = [step.text for level in LEVELS for step in level.steps]
+        # 引导文案现在只存在于独立的教学关里（LEVELS 里已经不带 steps）
+        texts = [step.text for step in TUTORIAL.steps]
         texts += ["⑵ 如果它前方还有别的箭头挡路，就飞不出去，并且扣掉 1 点生命值。",
                   "⑷ 通关一关才会解锁下一关，进度会自动保存。"]
         for text in texts:

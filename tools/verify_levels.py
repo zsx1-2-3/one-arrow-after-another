@@ -15,7 +15,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from game.board import DIRECTIONS  # noqa: E402
-from game.levels import LEVELS, validate_levels  # noqa: E402
+from game.levels import (LEVELS, TUTORIAL, validate_levels,  # noqa: E402
+                         validate_tutorial)
 
 DIR_NAME = {"up": "上", "down": "下", "left": "左", "right": "右"}
 
@@ -34,16 +35,19 @@ def main():
     parser.add_argument("--markdown", action="store_true", help="以 Markdown 表格输出")
     args = parser.parse_args()
 
+    tutorial = validate_tutorial()
     report = validate_levels()
 
     if args.markdown:
         print("| 关卡 | 名称 | 棋盘 | 箭头数 | 密度 | 开局可点 | 难度 | 生命值 | 本关满分 | 是否可解 |")
         print("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
-        for item in report:
+        for item in [tutorial] + report:
+            label = "教学关（独立入口）" if item["tutorial"] else "第%d关" % item["index"]
+            score = "不计分" if item["tutorial"] else "%d" % item["max_score"]
             print(
-                "| 第%d关 | %s | %s | %d | %.2f | %d | %s | %d 颗 | %d | %s |"
+                "| %s | %s | %s | %d | %.2f | %d | %s | %d 颗 | %s | %s |"
                 % (
-                    item["index"],
+                    label,
                     item["name"],
                     item["size"],
                     item["arrows"],
@@ -51,7 +55,7 @@ def main():
                     item["free"],
                     "★" * item["stars"],
                     item["max_hp"],
-                    item["max_score"],
+                    score,
                     "是" if item["solvable"] else "**否**",
                 )
             )
@@ -59,12 +63,29 @@ def main():
         print("=" * 78)
         print("《一箭又一箭》关卡校验报告")
         print("=" * 78)
+
+        # 教学关单独排在最前面：它不占关卡编号，也不参与计分
+        print()
+        print("教学关（主菜单独立入口：不计分、不占关卡编号、不用解锁）")
+        print("          棋盘 %s   箭头 %d 支   密度 %.2f   开局可点 %d 支   生命值 %d 颗"
+              % (tutorial["size"], tutorial["arrows"], tutorial["density"],
+                 tutorial["free"], tutorial["max_hp"]))
+        print("-" * 78)
+        for row, line in enumerate(TUTORIAL.layout):
+            print("   %d | %s" % (row, " ".join(line)))
+        print("-" * 78)
+        if tutorial["solvable"]:
+            print("   [OK] 可解，共 %d 步" % len(tutorial["order"]))
+            print("   参考顺序：" + describe(TUTORIAL, tutorial["order"]))
+            print("   引导步骤：%d 步（点哪里、为什么，都在关卡里的黄色高亮环上）"
+                  % len(TUTORIAL.steps))
+        else:
+            print("   [FAIL] 无解！存在互相阻挡的死循环，请调整布局。")
+
         for level, item in zip(LEVELS, report):
             print()
-            # 关卡名本身就叫「教学关」时不再重复标注，免得印成「教学关（教学关）」
-            tag = "（教学关）" if item["tutorial"] and level.name != "教学关" else ""
-            print("第 %2d 关  %s%s   棋盘 %s   箭头 %2d 支   密度 %.2f   开局可点 %d 支"
-                  % (item["index"], level.name, tag, item["size"], item["arrows"],
+            print("第 %2d 关  %s   棋盘 %s   箭头 %2d 支   密度 %.2f   开局可点 %d 支"
+                  % (item["index"], level.name, item["size"], item["arrows"],
                      item["density"], item["free"]))
             print("         难度 %s   生命值 %d 颗（容错随难度递增）   本关满分 %d 分"
                   % ("★" * item["stars"], item["max_hp"], item["max_score"]))
@@ -78,21 +99,26 @@ def main():
             else:
                 print("   [FAIL] 无解！存在互相阻挡的死循环，请调整布局。")
 
-    bad = [item for item in report if not item["solvable"]]
+    all_items = [tutorial] + report
+    bad = [item for item in all_items if not item["solvable"]]
     print()
     if bad:
         print("校验结果：%d 个关卡存在问题 %s" % (len(bad), [b["name"] for b in bad]))
         return 1
-    print("校验结果：全部 %d 个关卡均可正常通关。" % len(report))
+    print("校验结果：教学关 + 全部 %d 个编号关卡均可正常通关。" % len(report))
     if not args.markdown:
-        print("难度参考：棋盘尺寸到第 8 关就封顶在 9×9，之后靠密度继续加难——")
-        print("          同样的格子里箭头越多，需要逐条扫视的射线就越多；")
+        print("难度参考：第 1~4 关靠放大棋盘，第 5 关起靠密度加难——")
+        print("          棋盘尺寸到第 7 关就封顶在 9×9，之后同样的格子里箭头越来越多；")
         print("          开局可点的箭头越少，越要在开局仔细找出口。")
         print("生命值参考：按难度星级给，第 1 关 4 颗心、最后一关 7 颗心。")
         print("            关卡越难容错越高，一次手滑不至于被打回原点。")
+        print("            教学关不参与计分，单独给 %d 颗心，是个随便点的沙盒。"
+              % tutorial["max_hp"])
+        # 注意百分号要写成 %%：这一行同时在做 % 格式化，
+        # 直接写「+20%」会被当成格式符，脚本会在最后一行抛 ValueError。
         print("得分参考：本关得分 = 星级×250 × 剩余生命值 ÷ 生命值上限，")
-        print("          一颗心都没丢再 +20%；所有关卡满分合计 %d 分。"
-              % sum(item["max_score"] for item in report))
+        print("          一颗心都没丢再 +20%%；第 1~%d 关满分合计 %d 分。"
+              % (len(report), sum(item["max_score"] for item in report)))
     return 0
 
 

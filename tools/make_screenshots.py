@@ -27,16 +27,28 @@ import pygame  # noqa: E402
 
 from game import config  # noqa: E402
 from game.app import Game  # noqa: E402
-from game.levels import TOTAL_LEVELS  # noqa: E402
+from game.levels import LEVELS, TOTAL_LEVELS  # noqa: E402
 from game.progress import Progress  # noqa: E402
 
 OUT_DIR = os.path.join(ROOT, "assets")
 FRAME = 1.0 / 60.0
 
-# 截图里演示用到的关卡下标
-TUTORIAL = 0            # 教学关
-CHAIN = 3               # 连锁反应
-HOVER = 4               # 四面楚歌（用来展示红色路径与碰撞）
+
+def level_index(name):
+    """按关卡名取下标。
+
+    写死数字的话，以后插一关 / 删一关（教学关独立出去就是这样）脚本会
+    静默地截错关卡——改成按名字找，改名的时候这里会直接报错。
+    """
+    for index, level in enumerate(LEVELS):
+        if level.name == name:
+            return index
+    raise SystemExit("关卡表里没有「%s」" % name)
+
+
+# 截图里演示用到的关卡（教学关不在 LEVELS 里，走 start_tutorial 单独进）
+CHAIN = level_index("连锁反应")
+HOVER = level_index("四面楚歌")     # 用来展示红色路径与碰撞
 
 # 截图前预先通关的关卡：让关卡总览呈现出「已通关 / 可挑战 / 未解锁」三种状态
 PRECLEARED = (0, 1, 2, 3, 4)
@@ -111,8 +123,8 @@ def main():
     game.draw()
     save(screen, "shot-03-level-locked.png")
 
-    # -------- 4. 教学关：高亮环 + 底部逐步讲解 --------
-    game.start_level(TUTORIAL)
+    # -------- 4. 教学关：高亮环 + 底部逐步讲解（菜单上的独立入口）
+    game.start_tutorial()
     game.mouse_pos = (-1, -1)
     game.update_hover()
     settle(game, 0.2)
@@ -121,18 +133,18 @@ def main():
 
     # -------- 5. 游戏界面：悬停在被挡住的箭头上，路径显示为红色 --------
     game.start_level(HOVER)                 # 四面楚歌
-    hover(game, 1, 1)                       # (1,1) 的「>」被 (1,5) 的「v」挡住
+    hover(game, 5, 1)                       # (5,1) 的「^」要走过 3 格才被 (1,1) 挡住
     game.draw()
     save(screen, "shot-05-board-hover.png")
 
     # -------- 6. 撞击反馈：点被挡住的箭头（抓动画中间帧） --------
-    game.click_cell(1, 1)
+    game.click_cell(5, 1)
     settle(game, 0.14)
     unhover(game)                           # 移开鼠标，避免路径高亮盖住撞击效果
     game.draw()
     save(screen, "shot-06-collision.png")
 
-    # -------- 7. 飞出动画：第 4 关开一枪，抓中间帧 --------
+    # -------- 7. 飞出动画：第 3 关开一枪，抓中间帧 --------
     game.start_level(CHAIN)                 # 连锁反应
     hover(game, 1, 5)
     game.click_cell(1, 5)

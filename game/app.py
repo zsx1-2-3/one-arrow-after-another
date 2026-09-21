@@ -17,7 +17,7 @@ import pygame
 from . import anim, bgfx, config, scoring, ui
 from .board import (CLICK_BLOCKED, CLICK_EMPTY, CLICK_FLY, STATE_CLEARED,
                     STATE_FAILED, STATE_PLAYING, Board)
-from .levels import TOTAL_LEVELS, LEVELS
+from .levels import TOTAL_LEVELS, LEVELS, TUTORIAL
 from .progress import Progress
 
 # 场景常量定义在 config 里（背景模块也要用，避免循环依赖），这里只是转发一下
@@ -28,9 +28,11 @@ SCENE_PLAY = config.SCENE_PLAY
 OVERLAY_WIN = "win"
 OVERLAY_FAIL = "fail"
 OVERLAY_ALL_CLEAR = "allclear"
+OVERLAY_TUTORIAL_DONE = "tutorial"      # 教学关走完（不计分，所以单独一档结果面板）
 
 # ---------------------------------------------------------------- 关卡总览布局
-# 9 关正好排成 3 × 3；用 4 列的话会变成 4 + 4 + 1，最后一行孤零零一张卡。
+# 8 关排成 3 列：3 + 3 + 2，最后一行只有两张卡，所以会把那一行居中
+# （不然左边对齐会显得右边缺了一块）。
 CARD_COLUMNS = 3
 CARD_WIDTH = 264
 CARD_HEIGHT = 104
@@ -71,6 +73,7 @@ class Game:
 
         self.scene = SCENE_MENU
         self.level_index = 0
+        self.in_tutorial = False        # 当前玩的是不是教学关（它不占关卡编号、不计分）
         self.board = None
 
         self.cell_size = 60
@@ -111,7 +114,8 @@ class Game:
     # ================================================================ 场景
     @property
     def level(self):
-        return LEVELS[self.level_index]
+        """当前关卡：教学关单独一份数据，不占 LEVELS 的编号。"""
+        return TUTORIAL if self.in_tutorial else LEVELS[self.level_index]
 
     @property
     def tutorial_steps(self):
@@ -179,6 +183,23 @@ class Game:
         self.toast_timer = TOAST_DURATION
 
     # ------------------------------------------------------------ 关卡
+    def enter_play(self, level, index=0, tutorial=False):
+        """进入游戏界面，关卡数据由调用方给出。
+
+        教学关和编号关卡走的是同一套界面与状态机，区别只在数据来源与
+        「要不要记分 / 记进度」，所以开局这件事抽成一处，免得两边逻辑漂移。
+        """
+        self.in_tutorial = tutorial
+        self.level_index = index
+        self.board = Board(level)
+        self.scene = SCENE_PLAY
+        self.reset_common()
+        self.tutorial_index = 0
+        self.tutorial_done = not level.tutorial
+        self.layout_board()
+        self.buttons = self.make_play_buttons()
+        self.sync_tutorial()
+
     def start_level(self, index):
         """开始第 index 关（从 0 开始计数）。未解锁则拒绝并提示。"""
         if not 0 <= index < TOTAL_LEVELS:
@@ -188,15 +209,15 @@ class Game:
                             % (index, LEVELS[index - 1].name), config.COLOR_WARN)
             return False
 
-        self.level_index = index
-        self.board = Board(self.level)
-        self.scene = SCENE_PLAY
-        self.reset_common()
-        self.tutorial_index = 0
-        self.tutorial_done = not self.level.tutorial
-        self.layout_board()
-        self.buttons = self.make_play_buttons()
-        self.sync_tutorial()
+        self.enter_play(LEVELS[index], index)
+        return True
+
+    def start_tutorial(self):
+        """开始教学关：不占关卡编号、不用解锁、也不计分。
+
+        它随时可以从主菜单再进一次——想复习、或者想给同学演示都很方便。
+        """
+        self.enter_play(TUTORIAL, 0, tutorial=True)
         return True
 
     def next_level(self):
@@ -299,14 +320,23 @@ class Game:
         return row, col
 
     def make_card_rects(self):
-        """关卡总览里每张卡片的矩形（按行列自动排布）。"""
+        """关卡总览里每张卡片的矩形（按行列自动排布，不满的那一行居中）。
+
+        8 关排成 3 列就是 3 + 3 + 2，最后一行只有两张卡；
+        整行往右挪半张卡的距离居中，看着才不像是漏画了一张。
+        """
         total_width = CARD_COLUMNS * CARD_WIDTH + (CARD_COLUMNS - 1) * CARD_GAP_X
         left = (self.width - total_width) // 2
         rects = []
         for index in range(TOTAL_LEVELS):
             row, col = divmod(index, CARD_COLUMNS)
+            in_row = min(CARD_COLUMNS, TOTAL_LEVELS - row * CARD_COLUMNS)
+            offset = 0
+            if in_row < CARD_COLUMNS:               # 这一行没排满，居中显示
+                row_width = in_row * CARD_WIDTH + (in_row - 1) * CARD_GAP_X
+                offset = (total_width - row_width) // 2
             rects.append(pygame.Rect(
-                left + col * (CARD_WIDTH + CARD_GAP_X),
+                left + offset + col * (CARD_WIDTH + CARD_GAP_X),
                 CARDS_TOP + row * (CARD_HEIGHT + CARD_GAP_Y),
                 CARD_WIDTH, CARD_HEIGHT,
             ))
@@ -335,14 +365,21 @@ class Game:
         self.start_level(self.next_level_index())
 
     def make_menu_buttons(self):
+        # 主按钮独占一行；下面三个并排：教学关 / 关卡总览 / 退出游戏。
+        # 教学关占一个正式入口（而不是塞进关卡列表当第 1 关），
+        # 所以不计分、不占编号，想复习随时能再进。
         center_x = self.width // 2
+        row_y, row_w, row_gap = 562, 200, 16
+        left = center_x - (row_w * 3 + row_gap * 2) // 2
         buttons = [
-            ui.Button((center_x - 160, 506, 320, 56), self.primary_label,
+            ui.Button((center_x - 160, 494, 320, 56), self.primary_label,
                       self.primary_action, "primary", size=24),
-            ui.Button((center_x - 222, 578, 204, 46), "关卡总览",
-                      self.enter_levels, "ghost", size=18),
-            ui.Button((center_x + 18, 578, 204, 46), "退出游戏",
-                      self.quit, "ghost", size=18),
+            ui.Button((left, row_y, row_w, 46), "教学关",
+                      self.start_tutorial, "ghost", size=17),
+            ui.Button((left + row_w + row_gap, row_y, row_w, 46), "关卡总览",
+                      self.enter_levels, "ghost", size=17),
+            ui.Button((left + (row_w + row_gap) * 2, row_y, row_w, 46), "退出游戏",
+                      self.quit, "ghost", size=17),
         ]
         return buttons
 
@@ -393,7 +430,14 @@ class Game:
                     (left + index * (width + gap), panel.y + 300, width, height),
                     label, action, "ghost", size=16))
 
-        if self.overlay == OVERLAY_WIN:
+        if self.overlay == OVERLAY_TUTORIAL_DONE:
+            buttons.append(ui.Button((panel.centerx - 140, panel.y + 238, 280, 52),
+                                     "开始第 1 关", lambda: self.start_level(0),
+                                     "success", size=22))
+            add_secondary([("再看一遍", self.start_tutorial),
+                           ("关卡总览", self.enter_levels),
+                           ("返回主菜单", self.enter_menu)])
+        elif self.overlay == OVERLAY_WIN:
             buttons.append(ui.Button((panel.centerx - 140, panel.y + 238, 280, 52),
                                      "下一关", self.next_level, "success", size=22))
             add_secondary([("重玩本关", self.restart_level),
@@ -554,6 +598,18 @@ class Game:
 
     def show_result(self):
         level = self.level
+        if self.in_tutorial:
+            # 教学关不进存档、不算分：走完这一步就引导去第 1 关；
+            # 万一真把 6 颗心点光了也只是重来一遍，同样不给分。
+            self.score_max = 0
+            self.last_score = 0
+            self.score_gain = 0
+            self.score_perfect = self.board.hearts_lost == 0
+            self.overlay = (OVERLAY_TUTORIAL_DONE if self.board.state == STATE_CLEARED
+                            else OVERLAY_FAIL)
+            self.buttons = self.make_overlay_buttons()
+            return
+
         self.score_max = scoring.max_score(level)
         if self.board.state == STATE_CLEARED:
             # 得分只看「丢了几颗心」：一颗都没丢拿满分 + 完美奖励，
@@ -604,8 +660,9 @@ class Game:
             progress_text = "已通关全部 %d 关 · 总分 %d / %d，随时可以重玩刷分" % (
                 TOTAL_LEVELS, total, full)
         elif cleared == 0:
-            progress_text = "还没开始 · 共 %d 关，满分 %d 分，第一次玩建议先走一遍教学关" % (
-                TOTAL_LEVELS, full)
+            progress_text = ("还没开始 · 共 %d 关，满分 %d 分，"
+                             "第一次玩建议先去「教学关」走一遍（不计分、不限次数）"
+                             % (TOTAL_LEVELS, full))
         else:
             progress_text = "已通关 %d / %d 关 · 总分 %d / %d · 下一关是第 %d 关「%s」" % (
                 cleared, TOTAL_LEVELS, total, full, self.next_level_index() + 1,
@@ -788,9 +845,16 @@ class Game:
                          (0, config.HUD_HEIGHT - 1), (self.width, config.HUD_HEIGHT - 1))
 
         # 第一行：关卡标题（右上角那三个按钮由 draw() 统一画）
-        rect = ui.draw_text(self.screen, "第 %d / %d 关" % (self.level_index + 1, TOTAL_LEVELS),
-                            (40, HUD_TITLE_Y), size=22, bold=True)
-        ui.draw_text(self.screen, self.level.name, (rect.right + 14, HUD_TITLE_Y + 3),
+        if self.in_tutorial:
+            # 教学关没有「第 N / M 关」，因为它根本不占编号
+            rect = ui.draw_text(self.screen, "教学关", (40, HUD_TITLE_Y),
+                                size=22, bold=True, color=config.COLOR_TUTORIAL)
+            subtitle = "跟着黄色高亮走一遍，该点哪里都有提示"
+        else:
+            rect = ui.draw_text(self.screen, "第 %d / %d 关" % (self.level_index + 1, TOTAL_LEVELS),
+                                (40, HUD_TITLE_Y), size=22, bold=True)
+            subtitle = self.level.name
+        ui.draw_text(self.screen, subtitle, (rect.right + 14, HUD_TITLE_Y + 3),
                      size=17, color=config.COLOR_TEXT_DIM)
 
         # 第二行：三组数字横着排开——剩余箭头 / 生命值 / 本关得分
@@ -816,15 +880,24 @@ class Game:
                      (HUD_HEARTS_X + width + 10, HUD_ROW_Y), size=15,
                      color=config.COLOR_TEXT_DIM, anchor="midleft")
 
-        # 本关得分：点错会立刻往下掉，所以刚丢心时把数字染红提示一下
-        ui.draw_text(self.screen, "本关得分", (HUD_SCORE_LABEL_X, HUD_ROW_Y), size=14,
-                     color=config.COLOR_TEXT_DIM, anchor="midleft")
-        score_color = config.COLOR_DANGER if self.hp_lost_flash > 0.0 else config.COLOR_SCORE
-        rect = ui.draw_text(self.screen, str(self.board.score), (HUD_SCORE_VALUE_X, HUD_ROW_Y),
-                            size=26, color=score_color, bold=True, anchor="midleft")
-        ui.draw_text(self.screen, "/ %d" % scoring.max_score(self.level),
-                     (rect.right + 8, HUD_ROW_Y + 4), size=14,
-                     color=config.COLOR_TEXT_FAINT, anchor="midleft")
+        # 本关得分：点错会立刻往下掉，所以刚丢心时把数字染红提示一下。
+        # 教学关不参与计分，这一栏就换成说明文字，免得玩家以为没得分是出错了。
+        if self.in_tutorial:
+            ui.draw_text(self.screen, "本关得分", (HUD_SCORE_LABEL_X, HUD_ROW_Y), size=14,
+                         color=config.COLOR_TEXT_DIM, anchor="midleft")
+            ui.draw_text(self.screen, "不计分", (HUD_SCORE_VALUE_X, HUD_ROW_Y), size=24,
+                         color=config.COLOR_TEXT_FAINT, bold=True, anchor="midleft")
+        else:
+            ui.draw_text(self.screen, "本关得分", (HUD_SCORE_LABEL_X, HUD_ROW_Y), size=14,
+                         color=config.COLOR_TEXT_DIM, anchor="midleft")
+            score_color = (config.COLOR_DANGER if self.hp_lost_flash > 0.0
+                           else config.COLOR_SCORE)
+            rect = ui.draw_text(self.screen, str(self.board.score),
+                                (HUD_SCORE_VALUE_X, HUD_ROW_Y),
+                                size=26, color=score_color, bold=True, anchor="midleft")
+            ui.draw_text(self.screen, "/ %d" % scoring.max_score(self.level),
+                         (rect.right + 8, HUD_ROW_Y + 4), size=14,
+                         color=config.COLOR_TEXT_FAINT, anchor="midleft")
 
     def draw_board(self):
         rows, cols = self.board.rows, self.board.cols
@@ -1012,7 +1085,7 @@ class Game:
     def draw_footer(self):
         hint = self.level.hint
         if self.current_step is not None:
-            hint = "跟着黄色高亮环点就行，点错了也不会失败"
+            hint = "跟着黄色高亮环点就行（教学关不计分，随时可以再来一遍）"
         ui.draw_text(self.screen, "提示：" + hint,
                      (self.width // 2, self.height - 28), size=16,
                      color=config.COLOR_TEXT_FAINT, anchor="center")
@@ -1030,7 +1103,13 @@ class Game:
         ui.draw_round_rect(self.screen, panel, config.COLOR_PANEL, radius=18)
         ui.draw_round_rect(self.screen, panel, config.COLOR_PANEL_EDGE, radius=18, width=2)
 
-        if self.overlay == OVERLAY_WIN:
+        if self.in_tutorial and self.overlay == OVERLAY_TUTORIAL_DONE:
+            title, color = "教学结束！", config.COLOR_SUCCESS
+            desc = "玩法就是这些：清空本关的箭头即可通关"
+        elif self.in_tutorial:
+            title, color = "再试一次", config.COLOR_WARN
+            desc = "生命值用完了——教学关不计分也不占编号，重来一遍就好"
+        elif self.overlay == OVERLAY_WIN:
             title, color = "通关！", config.COLOR_SUCCESS
             desc = "第 %d 关「%s」的箭头全部飞出了棋盘" % (self.level_index + 1, self.level.name)
         elif self.overlay == OVERLAY_FAIL:
@@ -1045,11 +1124,18 @@ class Game:
         ui.draw_text(self.screen, desc, (panel.centerx, panel.y + 102),
                      size=17, color=config.COLOR_TEXT_DIM, anchor="center")
 
-        stats = [
-            ("本关箭头", str(self.board.total), False),
-            ("失去生命值", "%d 颗" % self.board.hearts_lost, False),
-            ("本关得分", "%d / %d" % (self.last_score, self.score_max), True),
-        ]
+        if self.in_tutorial:
+            # 教学关没有得分这一格——它不进任何纪录
+            stats = [
+                ("本关箭头", str(self.board.total), False),
+                ("失去生命值", "%d 颗" % self.board.hearts_lost, False),
+            ]
+        else:
+            stats = [
+                ("本关箭头", str(self.board.total), False),
+                ("失去生命值", "%d 颗" % self.board.hearts_lost, False),
+                ("本关得分", "%d / %d" % (self.last_score, self.score_max), True),
+            ]
         box_w, box_h, gap = 160, 68, 14
         total = len(stats) * box_w + (len(stats) - 1) * gap
         left = panel.centerx - total // 2
@@ -1071,6 +1157,9 @@ class Game:
 
     def score_note(self):
         """结果面板底部的得分说明，返回 (文字, 颜色)。"""
+        if self.in_tutorial:
+            return ("教学关不计分、不占关卡编号：想再看一遍，随时从主菜单进来",
+                    config.COLOR_TEXT_FAINT)
         if self.overlay == OVERLAY_FAIL:
             return ("生命值耗尽时本关得 0 分——先通关，再谈分数", config.COLOR_TEXT_FAINT)
 
