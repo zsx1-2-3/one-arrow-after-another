@@ -38,8 +38,8 @@ from game.progress import Progress  # noqa: E402
 FRAME = 1.0 / 60.0
 
 
-def make_level(layout, max_mistakes=3, name="测试关卡"):
-    return Level(name=name, hint="", max_mistakes=max_mistakes, layout=tuple(layout))
+def make_level(layout, max_hp=3, name="测试关卡"):
+    return Level(name=name, hint="", max_hp=max_hp, layout=tuple(layout))
 
 
 # T01 / T02 / T03 使用的测试关卡
@@ -69,19 +69,19 @@ class BoardRuleTestCase(unittest.TestCase):
         self.assertIsNotNone(result.arrow)
         self.assertEqual(self.board.remaining, 2)
         self.assertIsNone(self.board.arrow_at(1, 2))    # 已经从棋盘上消失
-        self.assertEqual(self.board.mistakes, 0)        # 不消耗失误
+        self.assertEqual(self.board.hp, self.board.max_hp)   # 不扣生命值
 
     # ---------------------------------------------------------- T02
-    def test_t02_click_blocked_arrow_costs_a_mistake(self):
-        """T02 点击前方有阻挡的箭头 -> 箭头不消失，失误次数减 1。"""
+    def test_t02_click_blocked_arrow_costs_hp(self):
+        """T02 点击前方有阻挡的箭头 -> 箭头不消失，生命值减 1。"""
         result = self.board.click(1, 1)                 # 朝右，被 (1,2) 的箭头挡住
         self.assertEqual(result.kind, CLICK_BLOCKED)
         self.assertEqual(result.blocker.row, 1)
         self.assertEqual(result.blocker.col, 2)
         self.assertIsNotNone(self.board.arrow_at(1, 1))  # 箭头还在
         self.assertEqual(self.board.remaining, 3)        # 剩余箭头数不变
-        self.assertEqual(self.board.mistakes, 1)
-        self.assertEqual(self.board.mistakes_left, 2)
+        self.assertEqual(self.board.hp, 2)               # 生命值 3 -> 2
+        self.assertEqual(self.board.hp_left, 2)
 
     # ---------------------------------------------------------- T03
     def test_t03_arrows_on_the_edge_fly_out_safely(self):
@@ -107,10 +107,10 @@ class BoardRuleTestCase(unittest.TestCase):
                 self.assertTrue(0 <= col < board.cols)
 
     def test_click_empty_cell_is_harmless(self):
-        """点到空格子不算失误，也不改变棋盘。"""
+        """点到空格子不扣生命值，也不改变棋盘。"""
         result = self.board.click(0, 0)
         self.assertEqual(result.kind, CLICK_EMPTY)
-        self.assertEqual(self.board.mistakes, 0)
+        self.assertEqual(self.board.hp, self.board.max_hp)
         self.assertEqual(self.board.remaining, 3)
 
     def test_click_outside_board_is_ignored(self):
@@ -127,14 +127,28 @@ class BoardRuleTestCase(unittest.TestCase):
         self.assertEqual(board.click(1, 1).kind, CLICK_IGNORED)
         self.assertEqual(board.remaining, 0)
 
-    def test_fail_when_mistakes_used_up(self):
-        """失误用尽后棋盘进入失败状态。"""
-        board = Board(make_level(BASIC_LAYOUT, max_mistakes=2))
+    def test_fail_when_hp_used_up(self):
+        """生命值用尽后棋盘进入失败状态。"""
+        board = Board(make_level(BASIC_LAYOUT, max_hp=2))
         board.click(1, 1)
         self.assertEqual(board.state, STATE_PLAYING)
         board.click(1, 1)
         self.assertEqual(board.state, STATE_FAILED)
-        self.assertEqual(board.mistakes_left, 0)
+        self.assertEqual(board.hp_left, 0)
+
+    def test_hp_drops_one_per_blocked_click(self):
+        """点错一次固定扣 1 点生命值；扣到 0 就失败，且不会再往下扣成负数。"""
+        board = Board(make_level(BASIC_LAYOUT, max_hp=3))
+        self.assertEqual(board.hp, 3)                    # 开局是满血
+
+        for expected in (2, 1, 0):
+            board.click(1, 1)                            # (1,1) 的「>」被 (1,2) 挡住
+            self.assertEqual(board.hp, expected)
+
+        self.assertEqual(board.state, STATE_FAILED)
+        board.click(1, 1)                                # 本关已结束，再点不生效
+        self.assertEqual(board.hp, 0)
+        self.assertEqual(board.remaining, 3)             # 箭头一支都没少
 
     def test_victory_condition(self):
         """清空全部箭头后棋盘进入通关状态。"""
@@ -147,13 +161,13 @@ class BoardRuleTestCase(unittest.TestCase):
         self.assertEqual(board.state, STATE_CLEARED)
 
     def test_reset_restores_the_level(self):
-        """reset() 把箭头布局和失误次数都恢复原样。"""
+        """reset() 把箭头布局和生命值都恢复原样。"""
         board = Board(make_level(BASIC_LAYOUT))
         board.click(1, 2)
         board.click(1, 1)
         board.reset()
         self.assertEqual(board.remaining, board.total)
-        self.assertEqual(board.mistakes, 0)
+        self.assertEqual(board.hp, board.max_hp)
         self.assertEqual(board.state, STATE_PLAYING)
         for arrow in board.arrows:
             self.assertIs(board.arrow_at(arrow.row, arrow.col), arrow)
@@ -184,6 +198,35 @@ class SolverTestCase(unittest.TestCase):
         self.assertGreaterEqual(TOTAL_LEVELS, 10)
         scores = [level.difficulty_score for level in LEVELS]
         self.assertEqual(scores, sorted(scores), "难度分应当从左到右递增")
+
+    def test_later_levels_gain_density_not_board_size(self):
+        """后半段的难度不靠放大棋盘，而是靠提高密度。
+
+        设计意图：棋盘尺寸尽早封顶，之后同样的格子里塞进更多箭头。
+        这条用例把意图固定下来，避免以后又退回「一路把棋盘加大」。
+        """
+        sizes = [(level.rows, level.cols) for level in LEVELS]
+
+        # 棋盘只许变大、不许变小（不能靠缩小棋盘来假装变难）
+        for (rows_a, cols_a), (rows_b, cols_b) in zip(sizes, sizes[1:]):
+            self.assertGreaterEqual(rows_b, rows_a)
+            self.assertGreaterEqual(cols_b, cols_a)
+
+        # 尺寸必须尽早封顶：从第 9 关起完全不再变化
+        frozen = sizes[8]
+        for index, size in enumerate(sizes[8:], start=9):
+            self.assertEqual(size, frozen, "第 %d 关的棋盘不该再变大" % index)
+        self.assertLessEqual(max(max(rows, cols) for rows, cols in sizes), 9,
+                             "棋盘尺寸不该超过 9×9")
+
+        # 封顶之后的箭头数量必须严格递增（难度只能从密度来）
+        arrows = [level.arrow_count for level in LEVELS]
+        for index in range(8, len(arrows) - 1):
+            self.assertLess(arrows[index], arrows[index + 1],
+                            "第 %d 关起箭头数应当继续增加" % (index + 1))
+
+        # 最后一关的密度要明显高于刚开始加密的那一关
+        self.assertGreater(LEVELS[-1].density, LEVELS[5].density + 0.15)
 
     def test_every_level_has_at_least_one_playable_arrow(self):
         """每个关卡开局都必须至少有一支能点的箭头，否则玩家一上手就是死局。"""
@@ -218,7 +261,7 @@ class SolverTestCase(unittest.TestCase):
     def test_tutorial_level_must_have_steps(self):
         """教学关必须带引导步骤，否则界面上会没有任何提示。"""
         with self.assertRaises(ValueError):
-            Level(name="坏教学关", hint="", max_mistakes=3,
+            Level(name="坏教学关", hint="", max_hp=3,
                   layout=("....", ".>..", "...."), tutorial=True)
 
     def test_level_sizes_are_within_screen(self):
@@ -427,16 +470,16 @@ class GameFlowTestCase(unittest.TestCase):
 
     # ---------------------------------------------------------- T05
     def test_t05_fail_then_restart(self):
-        """T05 失误次数耗尽 -> 显示失败并允许重新开始。"""
+        """T05 生命值耗尽 -> 显示失败并允许重新开始。"""
         game = self.game
         game.start_level(0)
         board = game.board
         target = self.blocked_arrow(board)
 
-        for _ in range(board.max_mistakes):
+        for _ in range(board.max_hp):
             game.click_cell(target.row, target.col)
         self.assertEqual(board.state, STATE_FAILED)
-        self.assertEqual(board.mistakes_left, 0)
+        self.assertEqual(board.hp_left, 0)
 
         self.advance()
         self.assertEqual(game.overlay, OVERLAY_FAIL)     # 弹出失败面板
@@ -448,14 +491,14 @@ class GameFlowTestCase(unittest.TestCase):
         self.assertIsNone(game.overlay)
         self.assertEqual(board.state, STATE_PLAYING)
         self.assertEqual(board.remaining, board.total)
-        self.assertEqual(board.mistakes, 0)
+        self.assertEqual(board.hp, board.max_hp)
 
     # ---------------------------------------------------------- T06
     def test_t06_restart_mid_game(self):
-        """T06 游戏进行中重新开始 -> 箭头布局和失误次数都恢复。
+        """T06 游戏进行中重新开始 -> 箭头布局和生命值都恢复。
 
         用第 2 关（初次拉弓）来测：它同时存在「能飞」和「被挡住」的箭头，
-        在教学关里消掉一支之后会全部畅通，就制造不出失误了。
+        在教学关里消掉一支之后会全部畅通，就扣不到生命值了。
         """
         game = self.game
         self.progress.mark_cleared(0)                    # 先解锁第 2 关
@@ -466,15 +509,15 @@ class GameFlowTestCase(unittest.TestCase):
         free = board.available_arrows()[0]
         game.click_cell(free.row, free.col)              # 先消掉一个箭头
         blocked = self.blocked_arrow(board)
-        game.click_cell(blocked.row, blocked.col)        # 再制造一次失误
+        game.click_cell(blocked.row, blocked.col)        # 再扣一次生命值
         self.assertLess(board.remaining, total)
-        self.assertEqual(board.mistakes, 1)
+        self.assertEqual(board.hp, board.max_hp - 1)     # 只扣掉 1 点
 
         restart_button = [b for b in game.buttons if b.label == "重新开始"][0]
         game.handle_click(restart_button.rect.center)
 
         self.assertEqual(board.remaining, total)
-        self.assertEqual(board.mistakes, 0)
+        self.assertEqual(board.hp, board.max_hp)
         self.assertEqual(board.state, STATE_PLAYING)
         for arrow in board.arrows:                       # 每个箭头都回到原位
             self.assertIs(board.arrow_at(arrow.row, arrow.col), arrow)
