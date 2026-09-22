@@ -47,12 +47,11 @@ import pygame  # noqa: E402
 
 import generate_levels as tools_generate  # noqa: E402
 from game import anim, bgfx, config, levels, pieces, scoring, ui  # noqa: E402
-from game.app import (DEMO_BLOCKED_CAPTION, DEMO_BLOCKED_SPECS,  # noqa: E402
-                      DEMO_CLEAR_CAPTION, DEMO_CLEAR_SPECS, DEMO_COLORS,
-                      DEMO_ROWS, DEMO_COLS, OVERLAY_ALL_CLEAR, OVERLAY_FAIL,
-                      OVERLAY_SETTINGS, OVERLAY_TUTORIAL_DONE, OVERLAY_WIN,
-                      PANEL_HEIGHT, SCENE_LEVELS, SCENE_MENU, SCENE_PLAY, Game,
-                      demo_pieces)
+from game.app import (MENU_PRIMARY_Y, MENU_PROGRESS_Y, MENU_ROW_Y,  # noqa: E402
+                      MENU_SUBTITLE_Y, MENU_TITLE_Y, OVERLAY_ALL_CLEAR,
+                      OVERLAY_FAIL, OVERLAY_SETTINGS, OVERLAY_TUTORIAL_DONE,
+                      OVERLAY_WIN, PANEL_HEIGHT, SCENE_LEVELS, SCENE_MENU,
+                      SCENE_PLAY, Game)
 from game.board import (CLICK_BLOCKED, CLICK_EMPTY, CLICK_FLY,  # noqa: E402
                         CLICK_IGNORED, STATE_CLEARED, STATE_FAILED,
                         STATE_PLAYING, Board, count_free_pieces, solve_level)
@@ -2181,42 +2180,40 @@ class GameFlowTestCase(unittest.TestCase):
             self.assertTrue(self.game.board.can_fly(piece))
         self.game.draw()
 
-    # ------------------------------------------------------------ 示例小图
-    def test_menu_demo_specs_match_their_captions(self):
-        """主菜单那两张小图的画面必须和说明文字一致。
+    # ------------------------------------------------------------ 开始界面
+    def test_menu_dropped_the_rules_card(self):
+        """开始界面不再画「玩法说明」卡片，原来那块位置整片留白。
 
-        被挡那张：正好一支被挡，而且是「橙色」那支（说明文字点了名）；
-        通畅那张：唯一一支能飞。
-        早先写成了两支互指，两张图里两支都被挡住，文字和画面对不上。
+        规则文字和两张示例小图（被挡 / 通畅）都删了——它们和教学关第一步到第五步
+        完全重复，堆在菜单上反而把主按钮淹掉。这条用例盯住「卡片别爬回来」：
+        卡片原来占 (width-500)//2, 228 起 500×436 的一大块，现在从它底部那一条
+        横带采样，不该再出现面板底色。
         """
-        blocked_level = make_level(DEMO_BLOCKED_SPECS, DEMO_ROWS, DEMO_COLS, name="示例被挡")
-        board = Board(blocked_level)
-        # 颜色要按 demo_pieces 取（主菜单画的就是它），不能按 Level 取——
-        # Level 会自己跑一遍 assign_colors，那套配色跟说明文字里点名的颜色无关。
-        palettes = [p.color for p in demo_pieces(DEMO_BLOCKED_SPECS)]
-        states = [(palettes[i], board.can_fly(p))
-                  for i, p in enumerate(board.pieces)]
-        self.assertEqual([can for _, can in states].count(False), 1)
-        self.assertEqual([can for _, can in states].count(True), 1)
-        orange = [color for color, can in states if not can][0]
-        self.assertEqual(orange, DEMO_COLORS[1],
-                         "说明文字里写的是「橙色那支被挡」，画出来的却换色了")
-        self.assertIn("橙色", DEMO_BLOCKED_CAPTION)
+        self.game.enter_menu()
+        self.game.toast_timer = 0.0          # 别把上一条用例留下的提示条算进来
+        self.game.draw()
 
-        clear_board = Board(make_level(DEMO_CLEAR_SPECS, DEMO_ROWS, DEMO_COLS, name="示例通畅"))
-        self.assertEqual(len(clear_board.pieces), 1)
-        self.assertTrue(clear_board.can_fly(clear_board.pieces[0]))
-        self.assertEqual(demo_pieces(DEMO_CLEAR_SPECS)[0].color, DEMO_COLORS[0])
+        band = pygame.Rect((self.game.width - 500) // 2, 620, 500, 40)
+        seen = {self.game.screen.get_at((x, y))[:3]
+                for x in range(band.left, band.right, 4)
+                for y in range(band.top, band.bottom, 4)}
+        self.assertNotIn(config.COLOR_PANEL[:3], seen,
+                         "开始界面又画回玩法说明卡片了")
 
-    def test_demo_specs_parse_and_are_deterministic(self):
-        first = demo_pieces(DEMO_BLOCKED_SPECS)
-        second = demo_pieces(DEMO_BLOCKED_SPECS)
-        self.assertIs(first, second)                    # 走缓存
-        for index, piece in enumerate(first):
-            self.assertEqual(piece.color, DEMO_COLORS[index % len(DEMO_COLORS)])
+    def test_menu_entries_sit_below_the_progress_line(self):
+        """标题 / 副标题 / 进度 / 按钮自上而下依次排开，且都在窗口里。"""
+        self.game.enter_menu()
+        self.assertLess(MENU_TITLE_Y, MENU_SUBTITLE_Y)
+        self.assertLess(MENU_SUBTITLE_Y, MENU_PROGRESS_Y)
+        self.assertLess(MENU_PROGRESS_Y, MENU_PRIMARY_Y)
+        self.assertLess(MENU_PRIMARY_Y, MENU_ROW_Y)
 
-    def test_demo_colors_are_distinct(self):
-        self.assertEqual(len(set(DEMO_COLORS)), len(DEMO_COLORS))
+        buttons = self.game.make_menu_buttons()
+        self.assertEqual(buttons[0].rect.top, MENU_PRIMARY_Y)
+        for button in buttons:
+            self.assertGreater(button.rect.bottom, MENU_PROGRESS_Y,
+                               "按钮不该压到进度行上")
+            self.assertLess(button.rect.bottom, config.WINDOW_HEIGHT)
 
     # ------------------------------------------------------------ 事件循环
     def test_event_handling_smoke(self):

@@ -3,7 +3,7 @@
 本文件记录《一箭又一箭》的自动化测试结果与关卡可解性校验结果，对应作业要求中的
 「5. 测试要求」与「3.1 至少设计 3 个可以正常通关的关卡」。
 
-* 测试用例总数：**222 个，全部通过**（`Ran 222 tests` → `OK`）
+* 测试用例总数：**230 个，全部通过**（`Ran 230 tests` → `OK`）
 * 关卡校验：**教学关 + 9 个编号关卡全部可解**（`tools/verify_levels.py` 退出码 0）
 * 本文件里的输出全部是真实运行的结果，没有手工润色过的数字
 
@@ -30,12 +30,12 @@ python -m unittest discover -s tests -v
 ## 二、总体结果
 
 ```
-Ran 231 tests in 15.436s
+Ran 230 tests in 16.827s
 
 OK
 ```
 
-231 个用例全部通过，分为十一组：
+230 个用例全部通过，分为十一组：
 
 | 测试类 | 用例数 | 覆盖内容 |
 | --- | --- | --- |
@@ -48,11 +48,14 @@ OK
 | `RopeCurveTestCase` | 6 | 折线拐弯圆滑成绳子曲线、C/S 形判定、蛇形箭生成仍合法可解 |
 | `AnimationTestCase` | 13 | 整条箭头沿路径飞出（时长随路径伸缩）、撞击抖动与泛红、飘字、心碎 |
 | `BackgroundTestCase` | 2 | 三个场景带背景渲染、背景跟随主题 |
-| `GameFlowTestCase` | 83 | 场景切换、关卡总览、解锁链路、教学引导、T04~T06、结算面板、计时 / 提示 / 辅助线 / 缩放平移、界面分区、键盘快捷键 |
+| `GameFlowTestCase` | 82 | 场景切换、关卡总览、解锁链路、教学引导、T04~T06、结算面板、计时 / 提示 / 辅助线 / 缩放平移、开始界面排版与分区、键盘快捷键 |
 | `VisualVarietyTestCase` | 9 | 相邻箭头不同色、配色来自调色板、各关渲染、悬停高亮、渲染不改棋盘 |
 
 > 用例数是从 `tests/test_game.py` 里现数的（按 `def test_` 前缀统计），
 > 不是沿用上一版的数字——项目每加一轮功能，这个数就会变。
+> 第六节那份完整日志也不必手抄：跑 `python tools/sync_test_log.py` 生成，
+> 它按 unittest 的真实顺序重排，缺的补上、代码里已经删掉的自动移掉
+> （手抄的那一版一度少了 11 条、还留着 2 个改过名的旧用例名）。
 
 ---
 
@@ -296,7 +299,7 @@ OK
 | `test_play_buttons_stay_inside_the_window` / `test_menu_buttons_stay_inside_the_window` | 游戏界面与主菜单的按钮都在窗口内 | ✅ |
 | `test_level_cards_stay_inside_the_window` / `test_level_cards_do_not_overlap` | 关卡卡片的 3×3 排布不越界、不重叠 | ✅ |
 | `test_tutorial_bar_is_inside_the_window` / `test_tutorial_bar_does_not_overlap_the_toolbar` / `test_tutorial_viewport_leaves_room_for_the_bar` | 教学讲解条在窗口内、不压工具栏，且棋盘为它让出了位置 | ✅ |
-| `test_menu_demo_specs_match_their_captions` / `test_demo_specs_parse_and_are_deterministic` / `test_demo_colors_are_distinct` | 主菜单上那两张小示例图与说明文字对得上、能解析、颜色可区分 | ✅ |
+| `test_menu_dropped_the_rules_card` / `test_menu_entries_sit_below_the_progress_line` | 开始界面不再画玩法说明卡片（原卡片位置整片留白），标题 / 副标题 / 进度 / 按钮自上而下依次排开 | ✅ |
 | `test_event_handling_smoke` / `test_quit_sets_the_running_flag` | 事件分发能跑完；退出标志正确 | ✅ |
 
 ### 4.9 观感回归（画面相关的用例）
@@ -368,6 +371,8 @@ test_animations_draw_without_raising ... ok
 test_floating_heart_rises_and_ends ... ok
 test_floating_heart_splits_into_two_halves ... ok   「心碎」动画把整颗心切成左右两半，两半拼起来必须还是整颗心。
 test_floating_text_rises_and_ends ... ok
+test_fly_duration_scales_with_travel ... ok   飞出时长按弧长换算：短箭不快过下限，长蛇形箭有上限拖底。
+test_fly_out_derives_duration_from_travel ... ok   FlyOut 不显式给时长时按弧长换算；显式给了就照用（兼容旧调用）。
 test_fly_out_finishes_and_keeps_moving_away ... ok
 test_fly_out_respects_direction ... ok
 test_fly_out_tail_follows_the_bend ... ok   L 形箭头：尾巴没过弯时沿第一段滑，过弯后沿箭头方向直线出视口。
@@ -439,8 +444,6 @@ test_clicking_empty_cell_does_nothing_in_game ... ok
 test_clicking_outside_the_board_does_nothing ... ok
 test_clicking_the_hinted_piece_clears_the_highlight ... ok
 test_default_zoom_sits_at_one_third_of_the_slider ... ok   默认缩放是 100%，它对应的滑杆位置应当就是三分之一处。
-test_demo_colors_are_distinct ... ok
-test_demo_specs_parse_and_are_deterministic ... ok
 test_drag_on_board_does_not_count_as_a_click ... ok   拖动查看棋盘时松手不能顺手点掉一支箭头。
 test_enter_levels_and_back ... ok
 test_escape_closes_the_settings_panel_first ... ok
@@ -461,7 +464,8 @@ test_level_cards_do_not_overlap ... ok
 test_level_cards_stay_inside_the_window ... ok
 test_locked_level_cannot_be_started_and_shows_a_toast ... ok
 test_menu_buttons_stay_inside_the_window ... ok
-test_menu_demo_specs_match_their_captions ... ok   主菜单那两张小图的画面必须和说明文字一致。
+test_menu_dropped_the_rules_card ... ok   开始界面不再画「玩法说明」卡片，原来那块位置整片留白。
+test_menu_entries_sit_below_the_progress_line ... ok   标题 / 副标题 / 进度 / 按钮自上而下依次排开，且都在窗口里。
 test_next_level_advances_after_winning ... ok
 test_overlay_buttons_stay_inside_the_panel ... ok
 test_pan_is_clamped_back_into_range ... ok   拖到边界之后 pan 要记回实际偏移，否则往回拖有一段是空转。
@@ -510,8 +514,8 @@ test_boards_are_densely_filled ... ok   这一版棋盘是密密麻麻铺满的�
 test_boards_are_portrait ... ok   九关都取竖长方形（行数 > 列数）。
 test_difficulty_and_stars_never_go_backwards ... ok
 test_every_level_is_solvable ... ok
-test_free_pieces_never_increase ... ok   开局可点数逐关不增：这是玩家真正感觉得到的难度。
-test_hp_follows_the_star_table ... ok
+test_free_pieces_stay_in_bounds ... ok   开局可点数要待在合理区间：第 1 关好找，任何一关都不至于满盘乱点。
+test_hp_follows_the_level_table ... ok
 test_level_count_and_names ... ok
 test_level_rejects_invalid_specs_at_construction ... ok   关卡数据写错时要在 import 阶段就炸，而不是等到玩家点进去。
 test_level_rejects_zero_size ... ok
@@ -521,6 +525,7 @@ test_report_shape ... ok
 test_solution_covers_every_piece_exactly_once ... ok
 test_total_max_score_is_stable ... ok
 test_tutorial_has_guided_steps ... ok
+test_tutorial_introduces_curved_arrows ... ok   正式关里有 C/S 形大弯箭，教学关得先让玩家见过一支弯的。
 test_tutorial_is_separate_from_numbered_levels ... ok   教学关不占编号、不在 LEVELS 里，主菜单上有单独入口。
 test_tutorial_is_solvable_and_small ... ok
 test_tutorial_steps_both_explain_ways ... ok   教学关必须把「能飞」和「被挡」两种情形各讲一遍。
@@ -561,6 +566,12 @@ test_vertical_gradient_size ... ok
 test_wrap_text_handles_short_and_empty_input ... ok
 test_wrap_text_never_starts_a_line_with_punctuation ... ok   逐字折行很容易把句号甩到下一行，中文排版上很难看。
 test_wrap_text_respects_max_width ... ok
+test_c_shaped_piece_renders_and_flies ... ok   C 形箭能渲染成贴图、能走飞出动画——绳子圆滑对蛇形路径同样成立。
+test_generator_grows_serpentine_pieces ... ok   curve_prob 拉满时生成器真能长出 C 形和 S 形，且布局合法可解。
+test_rope_points_clamps_to_short_segments ... ok   圆滑半径超过相邻段一半时被夹住，不会圆到相邻拐角里去。
+test_rope_points_keeps_ends_and_rounds_corner ... ok   圆滑曲线首尾原样保留，拐角被削进内侧、圆滑起点切在 corner 处。
+test_rope_points_passthrough_short_paths ... ok   两点（单段）或 corner=0 时原样返回——单格箭没必要也没有弧可圆。
+test_shape_kind_classifies_c_and_s ... ok   C 形 = ≥2 个同号拐弯，S 形 = ≥3 个交替拐弯，L/Z 形都不是。
 test_base_score_is_stars_times_250 ... ok
 test_full_hp_gives_max_score ... ok
 test_losing_one_heart_costs_more_than_nothing ... ok   丢一颗心必须真的掉分，否则「别点错」这件事就没有反馈。

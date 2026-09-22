@@ -136,7 +136,7 @@ def main():
     progress, save_path = fresh_progress("screenshot", PRECLEARED)
     game = Game(screen, progress=progress)
 
-    # -------- 1. 开始界面：标题 + 玩法说明 + 两张示例小图 --------
+    # -------- 1. 开始界面：标题 + 进度行 + 按钮组（不再有玩法说明卡片） --------
     game.draw()
     save(screen, "shot-01-menu.png")
 

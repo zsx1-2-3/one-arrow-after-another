@@ -2,14 +2,15 @@
 """游戏主体：场景状态机、事件分发、渲染与主循环。
 
 场景（self.scene）：
-    SCENE_MENU    开始界面：标题、玩法说明、进度、开始 / 教学关 / 关卡总览 / 退出
+    SCENE_MENU    开始界面：标题、进度条、开始 / 教学关 / 关卡总览 / 退出
+                  （刻意不放规则文字——规则交给教学关一步步演示，主界面保持干净）
     SCENE_LEVELS  关卡总览：全部关卡一览，未解锁的显示锁，点击会提示先通关哪一关
     SCENE_PLAY    游戏界面：顶部信息栏 + 棋盘 + 底部工具栏（教学关额外有逐步引导）
 
 通关 / 失败 / 设置以「浮层」的形式叠加在游戏界面上（self.overlay），
 浮层关闭前不接受棋盘点击，避免误操作。
 
-窗口是**竖向**的（600×960），和参照画面一致。棋盘区域夹在顶栏与底栏之间，
+窗口是**竖向**的（680×880），和参照画面一致。棋盘区域夹在顶栏与底栏之间，
 底栏那根滑杆可以放大棋盘，放大之后按住棋盘就能拖动查看——
 参照画面里的棋盘是比屏幕大的，靠缩放 + 拖动来看全貌。
 """
@@ -91,41 +92,14 @@ PANEL_WIDTH = 460
 # 加高会看到底部一大片空，压矮则会顶穿面板下边线。
 PANEL_HEIGHT = 440
 
-# 玩法说明里的两个迷你棋盘（5 列 2 行）：
-#   上面那个演示「前方有箭头 → 飞不出去」，下面那个演示「前方空 → 飞出去」
-#
-# 两处演示都刻意只让**一支**箭处在「被讨论」的位置，另一支（如果有）箭头朝棋盘外，
-# 保证「挡」的那张图里被挡住的只有橙色那支、「通」的那张图里只有绿色那支。
-# 早先的写法是两支箭面对面互指，结果两张图里两支都被挡住，
-# 示例和说明文字对不上——改这两个常量时务必让每张图只有一个主角。
-DEMO_ROWS, DEMO_COLS = 2, 5
-#  绿色：竖着两格、箭头朝下（朝棋盘外）→ 自己飞得出去
-#  橙色：横着两格、箭头朝左，前方 (1,1) 正是绿色那支的身子 → 飞不出去
-DEMO_BLOCKED_SPECS = ("0,1 v D", "1,3 < L")
-#  绿色：横着占满一行、箭头朝右（朝棋盘外）→ 一路畅通
-DEMO_CLEAR_SPECS = ("1,0 > R4",)
-DEMO_BLOCKED_CAPTION = "橙色这支箭头前方压着绿色箭头 → 飞不出去"
-DEMO_CLEAR_CAPTION = "这支箭头前方一路是空的 → 整条飞出棋盘并消失"
-# 说明文字里点名了颜色，所以这两支的颜色**写死**在这里，
-# 不能用 PIECE_PALETTE[index*3] 那种按序号取色的写法——
-# 哪天调色板顺序一变，文字就会和画面对不上。改说明文字时记得一起改这两个。
-DEMO_COLORS = (pieces.PIECE_PALETTE[0], pieces.PIECE_PALETTE[3])
-_demo_cache = {}
-
-
-def demo_pieces(specs):
-    """把玩法说明里的迷你棋盘解析成 Piece（颜色按 DEMO_COLORS 固定），结果缓存住。"""
-    cached = _demo_cache.get(specs)
-    if cached is None:
-        built = []
-        for index, spec in enumerate(specs):
-            cells, direction = pieces.parse_piece(spec)
-            built.append(pieces.Piece(cells=cells, direction=direction,
-                                      color=DEMO_COLORS[index % len(DEMO_COLORS)],
-                                      uid=index))
-        cached = tuple(built)
-        _demo_cache[specs] = cached
-    return cached
+# 开始界面的纵向排版：标题 / 副标题 / 进度行 / 主按钮上沿 / 次要按钮行上沿。
+# 主按钮和次要按钮是 make_menu_buttons() 建的，和 draw_menu() 分在两处，
+# 所以坐标抽成常量共用——改一处两处都跟着动，不会出现「标题挪了按钮没挪」。
+MENU_TITLE_Y = 316
+MENU_SUBTITLE_Y = 380
+MENU_PROGRESS_Y = 424
+MENU_PRIMARY_Y = 466
+MENU_ROW_Y = 556
 
 
 class Game:
@@ -557,11 +531,13 @@ class Game:
         # 主按钮独占一行；下面三个并排：教学关 / 关卡总览 / 退出游戏。
         # 教学关占一个正式入口（而不是塞进关卡列表当第 1 关），
         # 所以不计分、不占编号，想复习随时能再进。
+        # 按钮的纵向位置统一由 MENU_PRIMARY_Y / MENU_ROW_Y 给（见文件开头），
+        # draw_menu() 里的标题和进度行也按同一组常量排。
         center_x = self.width // 2
-        row_y, row_w, row_gap = 756, 180, 16
+        row_y, row_w, row_gap = MENU_ROW_Y, 180, 16
         left = center_x - (row_w * 3 + row_gap * 2) // 2
         buttons = [
-            ui.Button((center_x - 160, 682, 320, 58), self.primary_label,
+            ui.Button((center_x - 160, MENU_PRIMARY_Y, 320, 58), self.primary_label,
                       self.primary_action, "primary", size=24),
             ui.Button((left, row_y, row_w, 46), "教学关",
                       self.start_tutorial, "ghost", size=17),
@@ -1085,10 +1061,17 @@ class Game:
 
     # ---------------------------------------------------------------- 开始界面
     def draw_menu(self):
+        """开始界面：标题、副标题、一行进度、按钮组。
+
+        这一版**去掉了玩法说明卡片**。原来卡片里那五行规则 + 两张示例小图，
+        信息量其实和教学关第一步到第五步完全重复；主界面塞满字之后，
+        「开始游戏」这个真正的主按钮反而不显眼。规则交给教学关演一遍就够了，
+        这里只留标题和入口，留白多一点反而更像一个正经的开始界面。
+        """
         center_x = self.width // 2
-        ui.draw_text(self.screen, "一箭又一箭", (center_x, 116),
-                     size=52, bold=True, anchor="center")
-        ui.draw_text(self.screen, "点一下箭头，让它飞出棋盘", (center_x, 168),
+        ui.draw_text(self.screen, "一箭又一箭", (center_x, MENU_TITLE_Y),
+                     size=60, bold=True, anchor="center")
+        ui.draw_text(self.screen, "点一下箭头，让它飞出棋盘", (center_x, MENU_SUBTITLE_Y),
                      size=18, color=config.COLOR_TEXT_DIM, anchor="center")
 
         # 进度一行（顺带报一下总分：目标感主要来自分数的增长）
@@ -1105,90 +1088,11 @@ class Game:
             index = self.next_level_index()
             progress_text = "已通关 %d / %d 关 · 总分 %d / %d · 下一关是第 %d 关「%s」" % (
                 cleared, TOTAL_LEVELS, total, full, index + 1, LEVELS[index].name)
-        ui.draw_text(self.screen, progress_text, (center_x, 204),
+        ui.draw_text(self.screen, progress_text, (center_x, MENU_PROGRESS_Y),
                      size=14, color=config.COLOR_TEXT_FAINT, anchor="center")
-
-        self.draw_rules_card()
 
         ui.draw_text(self.screen, "空格 开始 / 继续　Esc 退出　进入关卡后：R 重开、H 提示、G 辅助线、加减号缩放",
                      (center_x, 838), size=13, color=config.COLOR_TEXT_FAINT, anchor="center")
-
-    def draw_rules_card(self):
-        """主界面的玩法说明卡片：文字规则 + 两组迷你棋盘示例。
-
-        卡片里所有纵向位置都写成 ``card.y + 偏移``，偏移量按「标题 26 + 五行规则 125
-        + 分隔线 + 小标题 + 两行示例 + 脚注」的顺序一路排下来，彼此留出空隙。
-        不要改成裸数字绝对坐标——改卡片高度时下面整串都会跟着错位。
-        """
-        card = pygame.Rect((self.width - 500) // 2, 228, 500, 436)
-        ui.draw_round_rect(self.screen, card, config.COLOR_PANEL, radius=18)
-        ui.draw_round_rect(self.screen, card, config.COLOR_PANEL_EDGE, radius=18, width=2)
-
-        ui.draw_text(self.screen, "玩法说明", (card.x + 24, card.y + 16),
-                     size=20, bold=True, color=config.COLOR_PANEL_TEXT)
-
-        rules = (
-            "① 一支「箭」是一条占好几格的箭头，可能是直的也可能是弯的，末端箭头是它的朝向。",
-            "② 点它身上任意一格：箭头前方是空的，整条箭头就飞出去。",
-            "③ 前方还有别的箭头挡着，就飞不出去，并且失去",
-            "④ 清空本关所有箭头即可通关；剩下的生命值越多，本关得分越高。",
-            "⑤ 生命值耗尽本关失败；通关才解锁下一关，得分与进度都会自动保存。",
-        )
-        y = card.y + 52
-        for index, line in enumerate(rules):
-            rect = ui.draw_text(self.screen, line, (card.x + 24, y),
-                                size=14, color=config.COLOR_PANEL_TEXT_DIM)
-            if index == 2:
-                # 行尾直接画一颗像素心，而不是写「一心」两个字——
-                # 生命值就是用这个图形表示的，文字说明也照同一个写法走
-                ui.draw_heart(self.screen, (rect.right + 12, rect.centery),
-                              config.HEART_INLINE_SIZE, config.COLOR_HP)
-            y += 25
-
-        divider = card.y + 190
-        pygame.draw.line(self.screen, config.COLOR_PANEL_EDGE,
-                         (card.x + 24, divider), (card.right - 24, divider), 1)
-
-        demo_x = card.x + 24
-        ui.draw_paragraph(self.screen, "两个微型棋盘，看清「挡」和「通」的区别：",
-                          pygame.Rect(demo_x, divider + 16, 460, 22),
-                          size=13, color=config.COLOR_PANEL_TEXT_DIM)
-
-        # 上：被挡。下：通畅。两张小图上下对照，比一整段文字好读。
-        self.draw_demo_row(demo_x, card.y + 246, DEMO_BLOCKED_SPECS,
-                           DEMO_BLOCKED_CAPTION, config.COLOR_DANGER, heart_icon=True)
-        self.draw_demo_row(demo_x, card.y + 326, DEMO_CLEAR_SPECS,
-                           DEMO_CLEAR_CAPTION, config.COLOR_SUCCESS)
-
-        ui.draw_text(self.screen, "把鼠标放在箭头上，还能看到它前方的路径：绿色=畅通，红色=被挡。",
-                     (card.x + 24, card.y + 402), size=13,
-                     color=config.COLOR_PANEL_TEXT_DIM)
-
-    def draw_demo_row(self, x, y, specs, caption, color, heart_icon=False, cell=26):
-        """画一行迷你棋盘（用于玩法说明里的示例）。
-
-        示例图靠左，说明文字靠右；``heart_icon`` 为真时在说明文字末尾接一颗像素心
-        （「还会失去 ❤」），心的位置由文字实际右边缘算出来，所以改文案不会画歪。
-        """
-        for piece in demo_pieces(specs):
-            ui.draw_piece(self.screen, (x, y), piece, cell)
-        board_w = DEMO_COLS * cell
-        text_x = x + board_w + 16
-        text_w = self.width - text_x - 40
-        # 自己先折一次行：draw_paragraph 只返回占用高度，不返回末行的右边缘，
-        # 而「失去 ❤」那颗心要贴着最后一个字画，所以得按同样的换行规则算一遍。
-        lines = ui.wrap_text(caption, size=13, max_width=text_w)
-        line_h = ui.get_font(13).get_linesize() + 3
-        row_px = cell * DEMO_ROWS
-        top = y + max(0, (row_px - len(lines) * line_h) // 2)
-        ui.draw_paragraph(self.screen, caption, pygame.Rect(text_x, top, text_w, 40),
-                          size=13, color=color, line_gap=3)
-        if heart_icon:
-            right = text_x + ui.text_width(lines[-1], size=13)
-            baseline = top + (len(lines) - 1) * line_h + ui.get_font(13).get_linesize() // 2
-            ui.draw_heart(self.screen, (right + 11, baseline),
-                          config.HEART_INLINE_SIZE, config.COLOR_HP)
-        return top + len(lines) * line_h
 
     # ---------------------------------------------------------------- 关卡总览
     def draw_levels(self):
