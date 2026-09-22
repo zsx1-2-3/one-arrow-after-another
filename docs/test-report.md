@@ -367,9 +367,9 @@ test_animations_draw_without_raising ... ok
 test_floating_heart_rises_and_ends ... ok
 test_floating_heart_splits_into_two_halves ... ok   「心碎」动画把整颗心切成左右两半，两半拼起来必须还是整颗心。
 test_floating_text_rises_and_ends ... ok
-test_fly_out_alpha_stays_opaque_early_then_fades ... ok
 test_fly_out_finishes_and_keeps_moving_away ... ok
 test_fly_out_respects_direction ... ok
+test_fly_out_tail_follows_the_bend ... ok   L 形管道：尾巴没过弯时沿第一段滑，过弯后沿箭头方向直线出视口。
 test_impact_fades_out_and_ends ... ok
 test_impact_offset_moves_along_its_direction ... ok
 test_impact_tint_is_cached_per_level ... ok
