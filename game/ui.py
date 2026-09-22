@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""界面绘制工具：字体、文字、按钮、箭头图形。
+"""界面绘制工具：字体、文字、按钮、管道棋子。
 
 所有函数都只依赖 Surface 与普通数值，因此 app.py 与截图脚本可以复用同一套绘制代码。
 """
@@ -9,10 +9,10 @@ import os
 
 import pygame
 
-from . import config
+from . import config, pieces
 
 _font_cache = {}
-_arrow_cache = {}
+_piece_cache = {}
 
 
 # ------------------------------------------------------------------ 字体
@@ -74,7 +74,14 @@ def wrap_text(text, size=22, max_width=400, bold=False):
 
     折完再做一遍「标点不下行」修正：若某行以收尾标点开头，
     就把上一行的最后一个字一起挪下来。这样句号不会孤零零占一行。
+
+    空串（或只有空白）直接返回空列表：调用方多半是 draw_paragraph，
+    返回 [] 就一行都不画、占用高度是 0；返回 [""] 则会白白占掉一行的高度，
+    排版上会莫名多出一段空白。
     """
+    if not str(text).strip():
+        return []
+
     font = get_font(size, bold)
     lines = []
     for paragraph in str(text).split("\n"):
@@ -189,7 +196,7 @@ def draw_check(surface, center, size, color=None):
 
 # ------------------------------------------------------------------ 生命值（像素心）
 # 生命值图标是一颗「像素心」：不写汉字、也不是圆滑的矢量心形，
-# 和整套界面的像素箭头是同一种质感（图形定义见 config.HEART_PIXEL_ART）。
+# 和整套界面的硬边管道是同一种质感（图形定义见 config.HEART_PIXEL_ART）。
 _heart_cache = {}
 HEART_COLS = len(config.HEART_PIXEL_ART[0])
 HEART_ROWS = len(config.HEART_PIXEL_ART)
@@ -294,119 +301,6 @@ def make_vertical_gradient(size, top_color, bottom_color):
     return surface
 
 
-# ------------------------------------------------------------------ 箭头
-def _arrow_shape(surface, center, side, color):
-    """在 surface 上画一个「朝右」的胖箭头图形。
-
-    造型照着实机参考图来：一根很粗的**圆头箭杆** + 一个张得很开的三角箭头，
-    整体几乎填满格子。
-
-    为什么要把杆加粗（旧版是 0.24，现在是 0.36）：深色底上细杆细头的箭头
-    看着"轻飘飘"的，一堆箭头铺在一起像一堆钉子；加粗之后才有参考图里那种
-    糖果色的分量感。三个比例都放在 config 里
-    （ARROW_SHAFT_RATIO / ARROW_HEAD_RATIO / ARROW_HEAD_SPAN），
-    以后想调胖瘦改配置就行，不用动这里的绘制代码。
-    """
-    cx, cy = center
-    half = side / 2.0
-    shaft_h = side * config.ARROW_SHAFT_RATIO
-    joint = cx + half - side * config.ARROW_HEAD_RATIO   # 箭杆与三角的交界
-    span = side * config.ARROW_HEAD_SPAN                 # 三角上下张开量
-
-    # 箭杆：两端都是圆的，看起来像一截短管道。
-    # 右端刻意画到交界之后一点，让三角把它盖住——
-    # 否则杆的圆头会在三角里露出一道弧线，像接口没焊好。
-    left = cx - half
-    right = joint + shaft_h * 0.42
-    pygame.draw.rect(
-        surface,
-        color,
-        pygame.Rect(int(round(left)), int(round(cy - shaft_h / 2)),
-                    max(1, int(round(right - left))), max(1, int(round(shaft_h)))),
-        border_radius=max(1, int(round(shaft_h * 0.44))),
-    )
-    # 三角箭头
-    pygame.draw.polygon(
-        surface,
-        color,
-        [
-            (int(round(cx + half)), int(round(cy))),
-            (int(round(joint)), int(round(cy - span))),
-            (int(round(joint)), int(round(cy + span))),
-        ],
-    )
-
-
-def _build_arrow(side, color, direction):
-    """生成某种颜色/方向的箭头贴图。
-
-    做法：先用白色画一个「朝右」的箭头当遮罩，旋转到目标方向，
-    再乘上一层很轻的竖直渐变（上亮下暗）。
-
-    两个刻意的选择：
-
-    * 渐变在**旋转之后**再乘，这样四个方向的受光方向一致（都从上方来），
-      不会出现「朝上的箭头变成左边亮」这种别扭的光照；
-    * 这一版**不加投影**。参考图里的箭头是纯平的，投影在深底上会糊出一圈
-      脏边，反而让箭头看起来发灰；想要"浮起来"的感觉，
-      靠的是箭头自己够亮、底够深，而不是加阴影。
-    """
-    pad = max(3, int(side * 0.10))
-    size = int(side) + pad * 2
-
-    # 1) 白色箭头遮罩
-    shape = pygame.Surface((size, size), pygame.SRCALPHA)
-    center = (size / 2.0, size / 2.0)
-    _arrow_shape(shape, center, side, (255, 255, 255))
-
-    # 2) 旋转到目标方向（90 的整数倍，贴图尺寸不变）
-    angle = {"right": 0, "up": 90, "left": 180, "down": -90}[direction]
-    if angle:
-        shape = pygame.transform.rotate(shape, angle)
-
-    # 3) 乘上竖直渐变：顶部提亮、底部压暗（幅度很小，见 config）
-    top = mix_color(color, (255, 255, 255), config.ARROW_HIGHLIGHT)
-    bottom = mix_color(color, (0, 0, 0), config.ARROW_SHADE)
-    gradient = pygame.Surface((size, size), pygame.SRCALPHA)
-    for y in range(size):
-        ratio = y / max(1, size - 1)
-        gradient.fill(tuple(int(a + (b - a) * ratio) for a, b in zip(top, bottom)) + (255,),
-                      pygame.Rect(0, y, size, 1))
-
-    arrow = shape.copy()
-    arrow.blit(gradient, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-    return arrow
-
-
-def arrow_color(direction):
-    """取某个方向对应的箭头颜色。
-
-    一个方向就是唯一一个颜色：同方向的箭头在画面上完全一致，
-    不会出现有的深有的浅。四个方向的颜色亮度是拉平的（见 config.DIR_COLORS）。
-    """
-    return config.DIR_COLORS[direction]
-
-
-def arrow_surface(side, color, direction):
-    key = (int(side), tuple(color), direction)
-    cached = _arrow_cache.get(key)
-    if cached is None:
-        cached = _build_arrow(key[0], tuple(color), direction)
-        _arrow_cache[key] = cached
-    return cached
-
-
-def draw_arrow(surface, center, side, direction, color=None, alpha=255):
-    """在 center（屏幕坐标）处画一个箭头，color 传 None 时按方向自动取色。"""
-    if color is None:
-        color = arrow_color(direction)
-    image = arrow_surface(side, color, direction)
-    if alpha < 255:
-        image = image.copy()
-        image.set_alpha(int(alpha))
-    surface.blit(image, image.get_rect(center=(int(center[0]), int(center[1]))))
-
-
 def mix_color(color_a, color_b, ratio):
     """按比例混合两种颜色，ratio=0 取 color_a，ratio=1 取 color_b。"""
     ratio = max(0.0, min(1.0, ratio))
@@ -423,12 +317,130 @@ def darken(color, ratio):
     return mix_color(color, (0, 0, 0), ratio)
 
 
+# ------------------------------------------------------------------ 管道棋子
+# 一支「箭」不是一格里的一个箭头，而是一条**占多格的粗管道**，末端一个箭头
+# （形状与规则见 pieces.py）。所以这里的绘制单位是「一整支箭」：
+# 先把一支箭渲染成一张贴图，再整张贴到棋盘上。
+#
+# 为什么按「支」而不是按「格」画：
+#   * 管道是折线，逐格画会让相邻格的圆头叠出一圈圈痕迹；
+#   * 飞出动画只需要把这张贴图整体位移，不用重画；
+#   * 同一支箭在一局里要贴几十帧，缓存下来只算一次。
+_piece_cache = {}
+PIECE_CACHE_LIMIT = 400         # 缩放滑杆会连续改变格距，缓存要有个上限
+
+# 方向 -> 屏幕单位向量（x 向右、y 向下）。从规则模块推出来，不另写一份，
+# 免得「规则里的上」和「画面上的上」哪天对不上了。
+DIR_VECTORS = {name: (d_col, d_row) for name, (d_row, d_col) in pieces.DIRECTIONS.items()}
+
+SUPERSAMPLE = 3                 # 先用 3 倍尺寸画，再缩回去——pygame 的直线没有抗锯齿
+
+
+def _paint_pipe(surface, points, direction, color, width, head_len, span):
+    """在 surface 上把一条折线画成粗管道，末端加一个箭头。
+
+    points 是各格中心的屏幕坐标（tail -> head 顺序），三个尺寸参数都用像素。
+    同一个函数会被调用两遍：先用「更粗 + 更暗」画一遍当描边，
+    再用本色画一遍，叠出来就是一圈均匀的外轮廓。
+    """
+    radius = width / 2.0
+    if len(points) > 1:
+        for start, end in zip(points, points[1:]):
+            pygame.draw.line(surface, color, start, end, int(round(width)))
+    # 每个拐点补一个圆：折线在拐角处会留一个缺口，圆头正好填平
+    for point in points:
+        pygame.draw.circle(surface, color,
+                           (int(round(point[0])), int(round(point[1]))),
+                           max(1, int(round(radius))))
+
+    dx, dy = DIR_VECTORS[direction]
+    last = points[-1]
+    tip = (last[0] + dx * head_len * 0.78, last[1] + dy * head_len * 0.78)
+    base = (last[0] - dx * head_len * 0.22, last[1] - dy * head_len * 0.22)
+    px, py = -dy, dx
+    pygame.draw.polygon(surface, color, [
+        tip,
+        (base[0] + px * span, base[1] + py * span),
+        (base[0] - px * span, base[1] - py * span),
+    ])
+
+
+def build_piece_surface(cells, direction, color, cell):
+    """把一支箭渲染成一张贴图，返回 (贴图, 相对棋盘左上角的偏移)。
+
+    偏移的含义：贴到 `棋盘左上角 + 偏移` 就位，所以放大缩小时画面对得上。
+    """
+    cell = max(4, int(round(cell)))
+    stroke = cell * config.PIECE_STROKE_RATIO
+    head_len = cell * config.PIECE_HEAD_RATIO
+    span = cell * config.PIECE_HEAD_SPAN
+
+    min_row = min(row for row, _ in cells)
+    max_row = max(row for row, _ in cells)
+    min_col = min(col for _, col in cells)
+    max_col = max(col for _, col in cells)
+    # 留白要够：圆头、描边、伸出去的箭头尖都不能被裁掉
+    pad = stroke * 0.6 + head_len * 0.34 + 3
+
+    width = (max_col - min_col + 1) * cell + pad * 2
+    height = (max_row - min_row + 1) * cell + pad * 2
+    scale = SUPERSAMPLE
+    big = pygame.Surface((int(width * scale), int(height * scale)), pygame.SRCALPHA)
+    points = [(((col - min_col + 0.5) * cell + pad) * scale,
+               ((row - min_row + 0.5) * cell + pad) * scale) for row, col in cells]
+
+    # 第一遍：描边。比本色暗一档、粗一圈——同色系管道挨在一起时靠它分得开。
+    grow = 1.0 + config.PIECE_OUTLINE_RATIO
+    _paint_pipe(big, points, direction,
+                mix_color(color, (0, 0, 0), config.PIECE_OUTLINE_DARKEN),
+                stroke * grow * scale, head_len * grow * scale, span * grow * scale)
+    # 第二遍：本色
+    _paint_pipe(big, points, direction, tuple(color),
+                stroke * scale, head_len * scale, span * scale)
+
+    image = pygame.transform.smoothscale(big, (int(round(width)), int(round(height))))
+    offset = (int(round(min_col * cell - pad)), int(round(min_row * cell - pad)))
+    return image, offset
+
+
+def piece_surface(cells, direction, color, cell):
+    """带缓存的 build_piece_surface。格距量化成整数，缩放时不会撑爆缓存。"""
+    key = (tuple(cells), direction, tuple(color), max(4, int(round(cell))))
+    cached = _piece_cache.get(key)
+    if cached is None:
+        if len(_piece_cache) >= PIECE_CACHE_LIMIT:
+            _piece_cache.clear()     # 简单粗暴：重来一遍也就几十张，够便宜
+        cached = build_piece_surface(cells, direction, color, key[3])
+        _piece_cache[key] = cached
+    return cached
+
+
+def piece_color(piece):
+    """取一支箭的颜色；没分配过就按 uid 从调色板里轮一个（测试与截图会用）。"""
+    if piece.color:
+        return piece.color
+    return pieces.PIECE_PALETTE[piece.uid % len(pieces.PIECE_PALETTE)]
+
+
+def draw_piece(surface, origin, piece, cell, alpha=255, offset=(0, 0)):
+    """在 origin（棋盘左上角的屏幕坐标）处画一支箭。
+
+    offset 是整体位移，飞出动画就是靠它把整支箭推走。
+    """
+    image, (dx, dy) = piece_surface(piece.cells, piece.direction,
+                                    piece_color(piece), cell)
+    if alpha < 255:
+        image = image.copy()
+        image.set_alpha(int(alpha))
+    surface.blit(image, (int(origin[0] + dx + offset[0]), int(origin[1] + dy + offset[1])))
+
+
 # ------------------------------------------------------------------ 光晕
 _glow_cache = {}
 
 
 def clear_caches():
-    """清空字体 / 箭头 / 像素心 / 光晕贴图的缓存。
+    """清空字体 / 管道 / 像素心 / 光晕贴图的缓存。
 
     什么时候需要它：pygame.quit() 之后又重新 init 的场景（比如测试里一个用例组
     退出 pygame、下一个用例组还要画图）。缓存里的 Font 与 Surface 在 quit 时
@@ -436,7 +448,7 @@ def clear_caches():
     所以重新初始化之后先把缓存清干净。
     """
     _font_cache.clear()
-    _arrow_cache.clear()
+    _piece_cache.clear()
     _heart_cache.clear()
     _glow_cache.clear()
 
@@ -559,12 +571,111 @@ def draw_icon_clock(surface, center, size, color):
     pygame.draw.line(surface, color, (cx, cy), (cx + radius * 0.40, cy), thickness)
 
 
+def draw_icon_gear(surface, center, size, color):
+    """设置「齿轮」：一圈轮齿 + 中心的孔。
+
+    画法：先在圆周上摆 8 个小方块当齿，再叠一个圆环，
+    最后挖掉圆心——比逐点描一个齿轮轮廓省事，而且缩小时不会糊成一团。
+    """
+    cx, cy = center
+    radius = size * 0.34
+    thickness = max(2, int(round(size * 0.13)))
+    tooth = max(2.0, size * 0.17)
+    for index in range(8):
+        angle = index * math.pi / 4
+        x = cx + math.cos(angle) * radius
+        y = cy + math.sin(angle) * radius
+        rect = pygame.Rect(0, 0, int(round(tooth)), int(round(tooth)))
+        rect.center = (int(round(x)), int(round(y)))
+        pygame.draw.rect(surface, color, rect, border_radius=max(1, int(tooth * 0.3)))
+    pygame.draw.circle(surface, color, (int(round(cx)), int(round(cy))),
+                       int(round(radius)), thickness)
+    hole = max(1, int(round(radius * 0.34)))
+    pygame.draw.circle(surface, color, (int(round(cx)), int(round(cy))), hole)
+
+
+def draw_icon_moon(surface, center, size, color):
+    """昼夜开关上的「月亮」：一段很粗的圆弧，看着就是个月牙。
+
+    画成粗圆弧而不是「两个圆相减」：pygame 的绘制函数是直接写像素、不做混合，
+    想用透明色去"挖"掉一块并不可靠；粗圆弧一次成形，缩到 20 像素也不糊。
+    """
+    cx, cy = center
+    radius = size * 0.40
+    rect = pygame.Rect(0, 0, int(round(radius * 2)), int(round(radius * 2)))
+    rect.center = (int(round(cx)), int(round(cy)))
+    width = max(3, int(round(radius * 0.80)))
+    pygame.draw.arc(surface, color, rect,
+                    math.radians(-68), math.radians(158), width)
+    # 两端补两个小圆，月牙的尖才不会是方角
+    for angle in (math.radians(-68), math.radians(158)):
+        point = (cx + math.cos(angle) * radius, cy - math.sin(angle) * radius)
+        pygame.draw.circle(surface, color,
+                           (int(round(point[0])), int(round(point[1]))), width // 2)
+
+
+def draw_icon_sun(surface, center, size, color):
+    """昼夜开关上的「太阳」：一个圆 + 八根短射线。"""
+    cx, cy = center
+    radius = size * 0.24
+    thickness = max(2, int(round(size * 0.10)))
+    pygame.draw.circle(surface, color, (int(round(cx)), int(round(cy))),
+                       int(round(radius)))
+    for index in range(8):
+        angle = index * math.pi / 4
+        inner = radius * 1.5
+        outer = radius * 2.15
+        pygame.draw.line(surface, color,
+                         (cx + math.cos(angle) * inner, cy + math.sin(angle) * inner),
+                         (cx + math.cos(angle) * outer, cy + math.sin(angle) * outer),
+                         thickness)
+
+
+def draw_icon_minus(surface, center, size, color):
+    """滑杆左端的「−」。"""
+    cx, cy = center
+    half = size * 0.34
+    thickness = max(2, int(round(size * 0.15)))
+    pygame.draw.line(surface, color, (cx - half, cy), (cx + half, cy), thickness)
+
+
+def draw_icon_plus(surface, center, size, color):
+    """滑杆右端的「+」。"""
+    cx, cy = center
+    half = size * 0.34
+    thickness = max(2, int(round(size * 0.15)))
+    pygame.draw.line(surface, color, (cx - half, cy), (cx + half, cy), thickness)
+    pygame.draw.line(surface, color, (cx, cy - half), (cx, cy + half), thickness)
+
+
+def draw_icon_replay(surface, center, size, color):
+    """重新开始「↺」：一段圆弧 + 一个回头的小三角。"""
+    cx, cy = center
+    radius = size * 0.36
+    thickness = max(2, int(round(size * 0.12)))
+    rect = pygame.Rect(0, 0, int(radius * 2), int(radius * 2))
+    rect.center = (int(round(cx)), int(round(cy)))
+    pygame.draw.arc(surface, color, rect, math.radians(-40), math.radians(250), thickness)
+    tip = (cx - radius * 0.10, cy - radius * 1.06)
+    pygame.draw.polygon(surface, color, [
+        (int(round(tip[0] + size * 0.16)), int(round(tip[1]))),
+        (int(round(tip[0] - size * 0.04)), int(round(tip[1] - size * 0.20))),
+        (int(round(tip[0] - size * 0.04)), int(round(tip[1] + size * 0.20))),
+    ])
+
+
 ICONS = {
     "back": draw_icon_back,
     "grid": draw_icon_grid,
     "bulb": draw_icon_bulb,
     "guide": draw_icon_guide,
     "clock": draw_icon_clock,
+    "gear": draw_icon_gear,
+    "moon": draw_icon_moon,
+    "sun": draw_icon_sun,
+    "minus": draw_icon_minus,
+    "plus": draw_icon_plus,
+    "replay": draw_icon_replay,
 }
 
 
@@ -586,6 +697,45 @@ def draw_dashed_line(surface, color, start, end, dash=8, gap=6, width=2):
                          (x1 + ux * position, y1 + uy * position),
                          (x1 + ux * head, y1 + uy * head), width)
         position = head + gap
+
+
+# ------------------------------------------------------------------ 缩放滑杆
+# 底栏中间那根。只有三个东西：一条轨道、表示进度的亮色段、一个圆钮。
+# 交互（拖动、点两端）在 app.py 里，这里只负责画和换算位置。
+SLIDER_KNOB_RADIUS = 11
+
+
+def slider_track_rect(rect):
+    """轨道矩形：两端各留出一个圆钮的半径，钮才不会压在 − / + 上。"""
+    return pygame.Rect(rect.x + SLIDER_KNOB_RADIUS, rect.centery - 3,
+                       max(1, rect.width - SLIDER_KNOB_RADIUS * 2), 6)
+
+
+def slider_knob_x(rect, ratio):
+    """ratio 0~1 对应的圆钮圆心横坐标。"""
+    track = slider_track_rect(rect)
+    return track.x + int(round(track.width * max(0.0, min(1.0, ratio))))
+
+
+def slider_ratio_from_x(rect, x):
+    """把鼠标横坐标换算成 0~1 的比例（超出范围就夹住）。"""
+    track = slider_track_rect(rect)
+    ratio = (x - track.x) / float(max(1, track.width))
+    return max(0.0, min(1.0, ratio))
+
+
+def draw_slider(surface, rect, ratio):
+    """画缩放滑杆，返回圆钮的圆心（app.py 用它判断有没有点在钮上）。"""
+    track = slider_track_rect(rect)
+    draw_round_rect(surface, track, config.COLOR_SLIDER_TRACK, radius=track.height // 2)
+    knob_x = slider_knob_x(rect, ratio)
+    filled = pygame.Rect(track.x, track.y, max(1, knob_x - track.x), track.height)
+    draw_round_rect(surface, filled, config.COLOR_TOOL_ON, radius=track.height // 2)
+    pygame.draw.circle(surface, config.COLOR_TOOL_ON, (knob_x, rect.centery),
+                       SLIDER_KNOB_RADIUS)
+    pygame.draw.circle(surface, config.COLOR_TEXT, (knob_x, rect.centery),
+                       SLIDER_KNOB_RADIUS, 3)
+    return (knob_x, rect.centery)
 
 
 # ------------------------------------------------------------------ 按钮
@@ -643,7 +793,7 @@ class IconButton:
 
     * **没有描边**，底色就是一整块圆角实心色，悬停时整体提亮。
       描边按钮一排摆开像一排框子，参考图里那种干净的圆钮更好看，
-      也让画面上的"框"都留给真正需要强调的东西（比如悬停的那一格）。
+      也让画面上的"框"都留给真正需要强调的东西（比如悬停的那一支管道）。
     * **开关类按钮**（toggle=True）用 self.on 表示当前是否开启，
       开启时底色换成强调蓝，不用读文字就知道状态。
 

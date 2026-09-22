@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
-"""动画效果：箭头飞出、撞击抖动、飘字提示。
+"""动画效果：整支箭飞出、撞击抖动、飘字提示。
 
 每个动画对象都提供统一的接口：
     update(dt) -> bool   返回 True 表示动画播完，可以从列表里移除
     draw(surface)        把自己画到屏幕上
+
+注意这里的单位变了：从「一格里的一个箭头」变成了**一整支箭**（占多格的管道）。
+所以飞出去是整条管道一起平移，撞击也是整条管道一起抖——
+这也正是参照画面里的表现：点一下，那条管子整体滑出去。
 """
 
 import math
@@ -11,25 +15,21 @@ import math
 import pygame
 
 from . import config, ui
-from .board import DIRECTIONS
-
-
-def _unit_vector(direction):
-    """方向 -> 屏幕坐标下的单位向量（x 向右，y 向下）。"""
-    d_row, d_col = DIRECTIONS[direction]
-    return pygame.Vector2(d_col, d_row)
 
 
 class FlyOut:
-    """箭头沿着自己的方向飞出棋盘。"""
+    """一整支箭沿着自己的方向飞出棋盘。
 
-    def __init__(self, arrow, cell_rect, travel, duration=config.FLY_DURATION):
-        self.direction = arrow.direction
-        # 用和棋盘上完全相同的颜色，否则箭头一飞出去就"换了个颜色"
-        self.color = ui.arrow_color(arrow.direction)
-        self.side = min(cell_rect.width, cell_rect.height) * config.ARROW_RATIO
-        self.start = pygame.Vector2(cell_rect.center)
-        self.vector = _unit_vector(self.direction)
+    飞出距离由 app 按棋盘尺寸算好传进来：**从箭头的末端格子**算起，
+    所以不管这条管道有多长、拐了多少弯，它都是"从箭头那一头先出去"。
+    """
+
+    def __init__(self, piece, board_origin, cell, travel, duration=config.FLY_DURATION):
+        self.piece = piece
+        self.board_origin = board_origin
+        self.cell = cell
+        dx, dy = ui.DIR_VECTORS[piece.direction]
+        self.vector = pygame.Vector2(dx, dy)
         self.travel = float(travel)
         self.duration = duration
         self.elapsed = 0.0
@@ -41,10 +41,10 @@ class FlyOut:
         return self.progress >= 1.0
 
     @property
-    def position(self):
+    def offset(self):
         # 用 1.7 次方做缓入，看起来像被"抽"出去一样越来越快
         eased = self.progress ** 1.7
-        return self.start + self.vector * (self.travel * eased)
+        return self.vector * (self.travel * eased)
 
     @property
     def alpha(self):
@@ -53,26 +53,28 @@ class FlyOut:
         return int(255 * (1.0 - (self.progress - 0.72) / 0.28))
 
     def draw(self, surface):
-        ui.draw_arrow(surface, self.position, self.side, self.direction,
-                      color=self.color, alpha=self.alpha)
+        ui.draw_piece(surface, self.board_origin, self.piece, self.cell,
+                      alpha=self.alpha, offset=self.offset)
 
 
 class Impact:
-    """撞击反馈：向前冲一下再弹回 + 抖动 + 单元格泛红 + 红框扩散。"""
+    """撞击反馈：整支箭向前冲一下再弹回 + 抖动 + 箭头那格泛红 + 红圈扩散。"""
 
-    def __init__(self, arrow, cell_rect, duration=config.IMPACT_DURATION):
-        self.direction = arrow.direction
-        self.color = ui.arrow_color(arrow.direction)
-        cell_size = min(cell_rect.width, cell_rect.height)
-        self.cell_size = cell_size
-        self.side = cell_size * config.ARROW_RATIO
-        self.center = pygame.Vector2(cell_rect.center)
-        self.rect = pygame.Rect(cell_rect)
-        self.vector = _unit_vector(self.direction)
-        self.perpendicular = pygame.Vector2(-self.vector.y, self.vector.x)
+    # 变红的强度量化成几档：每档一张染色贴图，缓存住，动画里不再新建 Surface
+    TINT_LEVELS = 4
+
+    def __init__(self, piece, board_origin, cell, head_rect, duration=config.IMPACT_DURATION):
+        self.piece = piece
+        self.board_origin = board_origin
+        self.cell = cell
+        self.head_rect = pygame.Rect(head_rect)
+        dx, dy = ui.DIR_VECTORS[piece.direction]
+        self.vector = pygame.Vector2(dx, dy)
+        self.perpendicular = pygame.Vector2(-dy, dx)
         self.duration = duration
         self.elapsed = 0.0
         self.progress = 0.0
+        self._tints = {}
 
     def update(self, dt):
         self.elapsed += dt
@@ -88,31 +90,58 @@ class Impact:
     def offset(self):
         t = self.progress
         # 前冲 18% 格宽后回弹
-        push = math.sin(math.pi * min(t / 0.45, 1.0)) * self.cell_size * config.IMPACT_PUSH_RATIO
+        push = math.sin(math.pi * min(t / 0.45, 1.0)) * self.cell * config.IMPACT_PUSH_RATIO
         # 垂直于前进方向的抖动，幅度随时间衰减
-        wobble = math.sin(t * math.pi * 8.0) * self.cell_size * 0.05 * (1.0 - t)
+        wobble = math.sin(t * math.pi * 8.0) * self.cell * 0.05 * (1.0 - t)
         return self.vector * push + self.perpendicular * wobble
+
+    def tinted(self, level):
+        """染红到某一档的贴图与偏移；同一档只生成一次，整段动画反复用。
+
+        偏移必须跟贴图一起缓存：贴图是**带留白**的（圆头、描边、箭头尖都要
+        留出位置），不带着偏移一起用就会画偏一格。这里返回 (图, 偏移) 二元组，
+        和 ui.piece_surface 的返回值形状保持一致，调用处好认。
+        """
+        cached = self._tints.get(level)
+        if cached is None:
+            color = ui.piece_color(self.piece)
+            ratio = level / float(self.TINT_LEVELS)
+            image, offset = ui.piece_surface(self.piece.cells, self.piece.direction,
+                                             color, self.cell)
+            tint = ui.mix_color((255, 255, 255), config.COLOR_DANGER, ratio)
+            tinted = image.copy()
+            tinted.fill(tuple(tint) + (255,), special_flags=pygame.BLEND_RGBA_MULT)
+            cached = (tinted, offset)
+            self._tints[level] = cached            # 存进去的就直接返回，
+        return cached                              # 别在 return 里现拼一个新元组
 
     def draw(self, surface):
         flash = self.flash
         if flash > 0:
-            # 单元格染红
-            ui.draw_round_rect_alpha(surface, self.rect, config.COLOR_DANGER,
+            # 箭头那一格染红：玩家点的就是这一支，反馈要落在它身上
+            ui.draw_round_rect_alpha(surface, self.head_rect, config.COLOR_DANGER,
                                      int(96 * flash), radius=config.CELL_RADIUS)
-            pygame.draw.rect(surface, config.COLOR_DANGER, self.rect, 3,
+            pygame.draw.rect(surface, config.COLOR_DANGER, self.head_rect, 3,
                              border_radius=config.CELL_RADIUS)
             # 向外扩散的红框
-            grow = int(self.cell_size * 0.12 * self.progress)
-            ring = self.rect.inflate(grow * 2, grow * 2)
+            grow = int(self.cell * 0.12 * self.progress)
+            ring = self.head_rect.inflate(grow * 2, grow * 2)
             ui.draw_round_rect_alpha(surface, ring, config.COLOR_DANGER,
                                      int(130 * flash), radius=config.CELL_RADIUS, width=2)
 
-        color = ui.mix_color(self.color, config.COLOR_DANGER, flash)
-        ui.draw_arrow(surface, self.center + self.offset, self.side, self.direction, color=color)
+        # 整支箭：闪得越厉害，染红越深
+        level = int(round(flash * self.TINT_LEVELS))
+        offset = self.offset
+        if level <= 0:
+            ui.draw_piece(surface, self.board_origin, self.piece, self.cell, offset=offset)
+            return
+        image, (dx, dy) = self.tinted(level)
+        surface.blit(image, (int(self.board_origin[0] + dx + offset[0]),
+                             int(self.board_origin[1] + dy + offset[1])))
 
 
 class FloatingText:
-    """向上飘动并淡出的提示文字（例如「这里没有箭头」）。"""
+    """向上飘动并淡出的提示文字（例如「这里没有管道」）。"""
 
     def __init__(self, text, position, color=config.COLOR_TEXT, size=22,
                  duration=0.9, rise=40):
@@ -143,10 +172,10 @@ class FloatingText:
 
 
 class FloatingHeart:
-    """失去一颗生命值：像素心从格子里弹起、裂成两半，然后淡出。
+    """失去一颗生命值：像素心从管道上弹起、裂成两半，然后淡出。
 
     这里刻意不写「失去一心」四个字——生命值本身就用心的形状表示，
-    心碎的画面比一行文字更直接，也不会和「这里没有箭头」那句文字提示混成一片。
+    心碎的画面比一行文字更直接，也不会和「这里没有管道」那句文字提示混成一片。
     """
 
     def __init__(self, position, color=config.COLOR_HP, size=40,
