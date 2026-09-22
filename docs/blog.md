@@ -2,10 +2,10 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 这个作业属于哪个课程 | <课程链接> |
-| 这个作业要求在哪里 | <作业链接> |
+| 这个作业属于哪个课程 | <https://edu.cnblogs.com/campus/fzu/2026-01SoftwareEngineeringandSoftwareEngineeringPractice> |
+| 这个作业要求在哪里 | <https://edu.cnblogs.com/campus/fzu/2026-01SoftwareEngineeringandSoftwareEngineeringPractice/homework/16718> |
 | 这个作业的目标 | 使用 Python 和 AIGC 完成「一箭又一箭」小游戏 |
-| 学号 | XXXXXXXX |
+| 学号 | 102402149 |
 | GitHub 仓库 | <https://github.com/zsx123456/one-arrow-after-another> |
 | 作者 | 周山翔（福州大学 · 数据科学与大数据技术） |
 
