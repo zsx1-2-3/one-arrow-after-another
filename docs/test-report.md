@@ -3,7 +3,7 @@
 本文件记录《一箭又一箭》的自动化测试结果与关卡可解性校验结果，对应作业要求中的
 「5. 测试要求」与「3.1 至少设计 3 个可以正常通关的关卡」。
 
-* 测试用例总数：**103 个，全部通过**
+* 测试用例总数：**222 个，全部通过**（`Ran 222 tests` → `OK`）
 * 关卡校验：**教学关 + 9 个编号关卡全部可解**（`tools/verify_levels.py` 退出码 0）
 * 本文件里的输出全部是真实运行的结果，没有手工润色过的数字
 
@@ -30,23 +30,25 @@ python -m unittest discover -s tests -v
 ## 二、总体结果
 
 ```
-Ran 103 tests in 1.996s
+Ran 222 tests in 17.765s
 
 OK
 ```
 
-103 个用例全部通过，分为八组：
+222 个用例全部通过，分为十组：
 
 | 测试类 | 用例数 | 覆盖内容 |
 | --- | --- | --- |
-| `BoardRuleTestCase` | 11 | 单次点击的规则判定（T01~T03、边界、生命值、复位） |
-| `SolverTestCase` | 15 | 10 个关卡的可解性、难度阶梯、尺寸冻结、教学关数据合法性 |
-| `LevelBalanceTestCase` | 4 | 生命值按难度给、容错逐关变高、星级从 1 铺到 5 |
-| `ScoringTestCase` | 6 | 得分公式、完美奖励、失败 0 分、总分上限 |
-| `ColorSpreadTestCase` | 4 | 布局同色扎堆比例、打散后仍可解且没变简单 |
-| `ProgressTestCase` | 12 | 进度存档的读写、解锁计算、损坏容错、最高分 |
-| `GameFlowTestCase` | 39 | 场景切换、关卡总览、解锁链路、教学引导、T04~T06、结算面板、计时 / 提示 / 辅助线、界面分区 |
-| `VisualVarietyTestCase` | 12 | 四方向配色亮度、中文折行、背景动效、像素心图标 |
+| `BoardRuleTestCase` | 45 | 管道写法解析与格式化、布局校验、相邻不同色、单次点击的规则判定（T01~T03）、边界、生命值、复位 |
+| `SolverTestCase` | 7 | 贪心求解器、单调性、无解布局判定、开局可点数统计 |
+| `LevelBalanceTestCase` | 19 | 9 关的可解性、竖屏尺寸、铺满率与可点数阶梯、难度与星级、生命值表、满分、教学关数据 |
+| `ScoringTestCase` | 9 | 得分公式、完美奖励、失败 0 分、总分上限、单调性 |
+| `ProgressTestCase` | 12 | 解锁规则、跳关不算解锁、存档读写与容错、最高分、全通关 |
+| `RenderPrimitiveTestCase` | 25 | 管道贴图缓存与几何、中文折行、滑杆取值、图标与像素心 |
+| `AnimationTestCase` | 11 | 整条管道飞出、撞击抖动与泛红、飘字、心碎 |
+| `BackgroundTestCase` | 2 | 三个场景带背景渲染、背景跟随主题 |
+| `GameFlowTestCase` | 83 | 场景切换、关卡总览、解锁链路、教学引导、T04~T06、结算面板、计时 / 提示 / 辅助线 / 缩放平移、界面分区、键盘快捷键 |
+| `VisualVarietyTestCase` | 9 | 相邻管道不同色、配色来自调色板、各关渲染、悬停高亮、渲染不改棋盘 |
 
 > 用例数是从 `tests/test_game.py` 里现数的（按 `def test_` 前缀统计），
 > 不是沿用上一版的数字——项目每加一轮功能，这个数就会变。
@@ -57,42 +59,49 @@ OK
 
 | 编号 | 测试内容 | 预期结果 | 实际结果 |
 | --- | --- | --- | --- |
-| T01 | 点击前方无阻挡的箭头 | 箭头飞出棋盘并消失 | ✅ 通过 |
-| T02 | 点击前方有阻挡的箭头 | 箭头不消失，失误次数减 1 | ✅ 通过 |
-| T03 | 点击位于边缘且朝向棋盘外的箭头 | 箭头正常消失，不发生越界错误 | ✅ 通过 |
-| T04 | 消除本关全部箭头 | 显示通关并进入下一关 | ✅ 通过 |
+| T01 | 点击前方无阻挡的管道 | 整条管道飞出棋盘并消失 | ✅ 通过 |
+| T02 | 点击前方有阻挡的管道 | 管道不消失，失误次数减 1 | ✅ 通过 |
+| T03 | 点击位于边缘且朝向棋盘外的管道 | 管道正常消失，不发生越界错误 | ✅ 通过 |
+| T04 | 消除本关全部管道 | 显示通关并进入下一关 | ✅ 通过 |
 | T05 | 失误次数耗尽 | 显示失败并允许重新开始 | ✅ 通过 |
-| T06 | 游戏进行中重新开始 | 箭头布局和失误次数恢复 | ✅ 通过 |
+| T06 | 游戏进行中重新开始 | 管道布局和失误次数恢复 | ✅ 通过 |
 
 > 说明：本作的「失误次数」做成了**生命值**（用像素心表示，点错一次丢一颗心），
 > 判定逻辑与作业要求完全一致，只是换了一个更直观的呈现方式和更自然的字段语义。
 
 ### 每个用例的具体做法
 
-* **T01**（`test_t01_click_free_arrow_flies_out`）：在测试关卡点击 `(1,2)` 处朝下的箭头
-  （下方无阻挡），断言返回 `fly`、该格变空、剩余箭头 3 → 2、生命值仍为满。
-* **T02**（`test_t02_click_blocked_arrow_costs_hp`）：点击 `(1,1)` 处朝右的箭头
-  （被 `(1,2)` 处的箭头挡住），断言返回 `blocked`、记录的阻挡者坐标是 `(1,2)`、
-  箭头仍在原位、剩余箭头数不变、生命值 4 → 3。
-* **T03**（`test_t03_arrows_on_the_edge_fly_out_safely`）：构造两条边界布局并逐个点击：
+* **T01**（`test_t01_free_piece_flies_out_and_disappears`）：在测试关卡点击 `(2,3)` 那支
+  竖着、箭头朝下的管道（下方一路空到盘外），断言返回 `fly`、被点的正是这一支、没有阻挡者、
+  该格变空、剩余管道 3 → 2、生命值仍为满、`history` 里留下了它。
+* **T02**（`test_t02_blocked_piece_loses_one_heart`）：点击 `(2,0)` 那支横躺、箭头朝右的管道
+  （正前方 `(2,3)` 被另一支的身子压住），断言返回 `blocked`、阻挡者是**整支管道**
+  `((2,3),(3,3),(4,3))`、管道仍在原位、剩余数不变、生命值 4 → 3。
 
-  * `.^..` / `...>` / `<...` / `..v.` —— 四条边各一支朝向棋盘外的箭头；
-  * `v...` / `....` / `....` / `...^` —— 四个角各一支朝棋盘内部的箭头。
+  同组还有两条：
+  * `test_t02_blocker_is_the_nearest_piece_on_the_ray`——射线上可能有好几支管道，
+    挡住它的必须是**最先遇到**的那一支；而且挡路的通常是那支的**身子**，它的箭头在别处
+    （这一例里挡路那支的头在 `(2,1)`，根本不在射线上）；断言 `path` 只到被占的那一格为止。
+  * `test_t02_blocking_piece_moves_away_then_it_can_fly`——先把挡路的点掉，原本被挡的那支就能飞，
+    这就是「连锁」的最小例子。
+* **T03**（`test_t03_pieces_at_edges_face_outward_and_can_fly`）：构造 4×5 的边界布局，
+  四条边上各一支朝向**棋盘外**的管道；逐个点击断言返回 `fly`，
+  并断言 `ray()` 返回的坐标全部落在棋盘内（不会算出越界坐标），最后 `remaining` 归零、状态 `cleared`。
+* **T04**（`test_t04_clear_level_then_go_to_next_level`）：按求解器给出的顺序清空第 1 关 →
+  断言 `state == cleared`、剩余为 0；推进到结果面板弹出 → 断言是「通关」面板、
+  得分等于本关满分、零失误、已写入存档、下一关已解锁；
+  再调用面板上的「下一关」（`next_level()`）→ 断言关卡序号 +1、棋盘已按新关卡重新初始化。
+* **T05**（`test_t05_fail_then_restart`）：反复点击一支被挡住的管道，直到生命值扣到 0 →
+  断言 `state == failed`；推进到结果面板弹出 → 断言是「失败」面板、本关 0 分、存档里也是 0；
+  再点失败面板的主按钮「重新开始本关」（`restart_level()`）→ 断言状态回到进行中、
+  生命值回满、剩余管道数恢复、面板关闭。
+* **T06**（`test_t06_restart_mid_game`）：开局后先点掉一支能飞的（剩余数减少），
+  再故意点错一次（生命值 -1），确认两个数都已经变了 → 点「重新开始」→ 断言剩余管道数恢复为总数、
+  生命值回满、状态回到进行中、计时归零、动画列表清空，并且**逐个断言每支管道都回到了它原来的格子上**。
 
-  对每次点击断言返回 `fly`，并额外断言 `path_cells()` 返回的所有坐标都落在棋盘内、
-  且 `remaining` 最终归零、状态变为 `cleared`（不出现索引越界）。
-* **T04**（`test_t04_clear_level_then_go_to_next_level`）：按求解器给出的顺序点完第 1 关 →
-  断言 `state == cleared`、剩余箭头为 0；推进 1.5 秒 → 断言弹出通关面板；
-  再点击面板上的「下一关」按钮 → 断言关卡序号 +1、场景仍为游戏界面、棋盘已按新关卡重新初始化。
-  另外单独验证打完第 9 关（最后一关）会出现「全部通关」面板。
-* **T05**（`test_t05_fail_then_restart`）：反复点击一支被挡住的箭头，直到生命值扣到 0 →
-  断言 `state == failed`、生命值为 0；推进 1.5 秒 → 断言弹出失败面板；
-  点击「重新开始本关」→ 断言面板关闭、状态回到进行中、生命值回满、箭头全部复位。
-* **T06**（`test_t06_restart_mid_game`）：用第 2 关（交叉路口）来测——
-  它同时存在「能飞」和「被挡住」的箭头，而教学关里消掉一支之后全场就畅通了，制造不出失误。
-  先点掉一支可以直接飞出的箭头（剩余箭头减少），再故意点一次被挡住的箭头（生命值 -1）
-  → 点击「重新开始」按钮 → 断言剩余箭头数恢复为总数、生命值回满、状态回到进行中，
-  并且**逐个断言每支箭头都回到了它原来的格子**。
+> 六个用例的编号与命名是刻意对齐作业要求的：`test_t04_*` / `test_t05_*` / `test_t06_*`
+> 覆盖的就是作业表格里的第 4~6 项。规则层级（`BoardRuleTestCase`）里测「点到空格子」这类
+> 细枝末节的用例**不占用** T 编号，避免出现「名字叫 T04、测的却是别的事」这种对不上的情况。
 
 ---
 
@@ -100,273 +109,490 @@ OK
 
 除了作业要求的六条，核心玩法机制每一项都有对应用例兜底。
 
-### 4.1 生命值（失误次数）
+### 4.1 管道模型与关卡数据
 
 | 用例 | 验证内容 | 结果 |
 | --- | --- | --- |
-| `test_hp_drops_one_per_blocked_click` | 点错一次固定扣 1 点生命值；扣到 0 就失败，且不会再往下扣成负数 | ✅ |
-| `test_fail_when_hp_used_up` | 生命值用尽后棋盘进入失败状态 | ✅ |
-| `test_hp_is_granted_by_difficulty` | 每关的生命值必须正好是「星级 → 生命值」表里对应的值 | ✅ |
-| `test_tolerance_grows_from_first_level_to_last` | 生命值上限整体不下降，最后一关明显比第 1 关宽容（4 → 7 颗心） | ✅ |
-| `test_one_mistake_hurts_less_on_harder_levels` | 点错一次的代价逐关变小（37.7% → 28.6%），这是「容错越来越高」的量化说法 | ✅ |
-| `test_tutorial_is_a_forgiving_sandbox` | 教学关是给人放胆点的沙盒，生命值比同星级关卡更宽裕 | ✅ |
-| `test_blocked_click_pops_a_broken_heart_not_hanzi` | 点错时飘出来的是一颗「碎掉的像素心」，而不是「失去一心」四个汉字 | ✅ |
-| `test_broken_heart_animation_renders_and_fades_out` | 心碎动画：两半分开、心往上飘、末端淡出，每一帧都画得出来 | ✅ |
-| `test_hud_hearts_are_pixel_hearts` | HUD 那一排生命值画的也是像素心：还有的用亮色、失去的用暗色 | ✅ |
-| `test_heart_icon_is_a_pixel_art_grid` | 生命值图标是规整网格：左右对称、顶部中间留凹口、底部有尖 | ✅ |
-| `test_lost_heart_is_an_empty_outline` | 已经失去的那颗心只剩外沿，内部镂空，和实心的一眼能区分 | ✅ |
+| `test_parse_single_cell_piece` | 不带路径段的写法 = 只占一格 | ✅ |
+| `test_parse_multi_segment_path` | 路径按「方向字母 + 格数」累加，从尾到头有序 | ✅ |
+| `test_parse_default_segment_count_is_one` | 字母后面不写数字就是走一格 | ✅ |
+| `test_parse_downward_piece_is_not_broken_by_upper` | 朝下的 `v` 不能被 `upper()` 变成 `V` 而解析失败 | ✅ |
+| `test_parse_accepts_lowercase_path_and_extra_spaces` | 大小写混杂、多余空格都要能吃下 | ✅ |
+| `test_parse_rejects_bad_specs` | 写法不合法时抛 `ValueError` | ✅ |
+| `test_format_piece_round_trip` | `format_piece` 与 `parse_piece` 互为逆运算 | ✅ |
+| `test_format_piece_merges_repeated_steps` | 连续同向的步数合并成 `D3` 这种紧凑写法 | ✅ |
+| `test_format_piece_rejects_diagonal_step` | 斜着连过去的两格要报错 | ✅ |
+| `test_piece_head_tail_and_length` | 头的定义是 `cells[-1]`、尾是 `cells[0]` | ✅ |
+| `test_piece_ray_stops_at_board_edge` | 射线只沿一个方向走，到边界为止 | ✅ |
+| `test_validate_layout_accepts_good_level` | 合法布局通过校验 | ✅ |
+| `test_validate_layout_rejects_empty_level` | 一支管道都没有的关卡直接报错 | ✅ |
+| `test_validate_layout_rejects_out_of_board` | 跑到棋盘外的管道直接报错 | ✅ |
+| `test_validate_layout_rejects_overlap` | 两支管道重叠在一格上直接报错 | ✅ |
+| `test_validate_layout_rejects_broken_path` | 路径不是逐格相邻直接报错 | ✅ |
+| `test_validate_layout_rejects_self_crossing` | 自己交叉的路径直接报错 | ✅ |
+| `test_validate_layout_rejects_head_direction_mismatch` | 最后一段和箭头方向不一致直接报错（否则箭头会歪在拐角上） | ✅ |
+| `test_validate_layout_rejects_piece_facing_own_body` | 箭头正对着自己的管道直接报错（这种永远飞不出去） | ✅ |
+| `test_faces_own_body_false_for_clean_shape` | 正常的拐弯管道不会被误判成「对着自己」 | ✅ |
+| `test_build_grid_marks_owner_index` | 格子表里存的是「这一格属于第几支」 | ✅ |
+| `test_assign_colors_gives_every_piece_a_palette_color` | 每支管道都拿到了调色板里的颜色 | ✅ |
+| `test_adjacent_pieces_never_share_a_color` | 上下左右相邻的两支管道不许同色 | ✅ |
+| `test_assign_colors_is_deterministic` | 同样的布局必须得到同样的配色 | ✅ |
+| `test_clicking_any_cell_of_a_pipe_selects_the_whole_pipe` | 点管道的哪一格都算选中它 | ✅ |
+| `test_find_blocker_ignores_the_pieces_own_body` | 管道绕回来贴着自己箭头前方时不算「被自己挡住」 | ✅ |
+| `test_click_result_carries_the_ray_path` | 点击结果带上「箭头前方直到边界」的格子 | ✅ |
+| `test_path_to_blocker_stops_at_the_nearest_piece` | 红段只画到被占的那一格为止 | ✅ |
+| `test_path_to_blocker_returns_the_whole_ray_when_clear` | 通畅时返回整条射线 | ✅ |
+| `test_edge_ray_does_not_run_off_the_board` | 边上的射线不越界 | ✅ |
+| `test_ray_covers_corner_pieces_correctly` | 角落管道的射线正确 | ✅ |
 
-### 4.2 得分机制
-
-| 用例 | 验证内容 | 结果 |
-| --- | --- | --- |
-| `test_full_score_follows_the_difficulty_stars` | 满分 = 星级 × 300（基础分 250 + 20% 完美奖励） | ✅ |
-| `test_perfect_bonus_only_when_nothing_is_lost` | 零失误奖励只在满心通关时给，而且正好是基础分的 20% | ✅ |
-| `test_every_mistake_costs_points` | 同一关里，失去的心越多得分越低，且是严格下降 | ✅ |
-| `test_failing_the_level_is_worth_nothing` | 生命值耗尽时本关 0 分（越界的参数也不会算出一个负数） | ✅ |
-| `test_total_full_score_is_the_sum_of_all_levels` | 九关满分合计 9300 分 | ✅ |
-| `test_board_exposes_a_live_score` | 棋盘自己就知道当前能拿多少分，HUD 直接用这个数（点错立刻掉） | ✅ |
-| `test_clearing_without_mistakes_pays_the_full_score` | 零失误通关：拿满分、记进存档，结算面板写出完美奖励 | ✅ |
-| `test_every_mistake_lowers_the_score` | 丢一颗心，HUD 上的得分立刻按比例下降，最终结算也跟着少 | ✅ |
-| `test_a_worse_replay_keeps_the_old_record` | 重玩打得差不会把最高分冲掉（存档只记最好的一次） | ✅ |
-
-### 4.3 关卡总览与解锁
-
-| 用例 | 验证内容 | 结果 |
-| --- | --- | --- |
-| `test_level_select_lists_all_levels` | 关卡总览里每张卡片对应一个关卡，数量与 `LEVELS` 一致 | ✅ |
-| `test_clicking_an_unlocked_card_starts_that_level` | 点已解锁的卡片直接开局，且进入的是那一关 | ✅ |
-| `test_clicking_a_locked_card_only_shows_a_hint` | 点未解锁的卡片不会开局，只提示要先通关哪一关 | ✅ |
-| `test_locked_level_cannot_be_started` | 绕过界面直接调用开局也一样被拦住 | ✅ |
-| `test_clearing_a_level_unlocks_the_next_one` | 通关后下一关立刻变为可进入 | ✅ |
-| `test_primary_button_follows_progress` | 主按钮文字随进度变化：从「开始游戏」到「继续第 N 关」 | ✅ |
-| `test_all_levels_can_be_cleared_in_order` | 按顺序把 9 关全部打通，验证整条解锁链可用 | ✅ |
-| `test_only_first_level_unlocked_at_start` | 全新存档只解锁第 1 关 | ✅ |
-| `test_clearing_unlocks_the_next_level` | 通关一关才解锁下一关 | ✅ |
-| `test_skipping_a_level_does_not_unlock_further` | 跳着通关不算数：第 2 关没过，第 3 关依然锁着 | ✅ |
-| `test_reset_clears_everything` | 清空进度后回到只解锁第 1 关，最高分一并清掉并且已落盘 | ✅ |
-| `test_reset_progress_needs_two_clicks` | 「清空进度」要点两次才真的清，避免手滑 | ✅ |
-| `test_save_and_reload` | 存档写到磁盘后能被重新读回来 | ✅ |
-| `test_mark_cleared_is_idempotent` | 重复标记同一关不会出错，也不重复写盘 | ✅ |
-| `test_missing_or_broken_save_file_is_tolerated` | 存档不存在或内容损坏时当成空进度，而不是崩溃 | ✅ |
-| `test_old_save_without_scores_still_loads` | 老存档（version 1，没有 scores 字段）不会因为升级格式丢进度 | ✅ |
-| `test_broken_scores_in_the_save_file_are_ignored` | 存档里的分数被人手改坏了（非数字、负数）时，只丢掉坏的那几条 | ✅ |
-| `test_scores_are_recorded_and_only_the_best_one_wins` | 每关只留最高分：重玩手感差不会把纪录冲掉 | ✅ |
-| `test_total_score_is_the_sum_of_each_levels_best` | 总分 = 各关最高分之和；不存在关卡里的分数不计入 | ✅ |
-| `test_cleared_count_next_index_and_all_cleared` | 已通关数量、「下一关」取值、「全部通关」判定 | ✅ |
-
-### 4.4 教学关
+### 4.2 求解器
 
 | 用例 | 验证内容 | 结果 |
 | --- | --- | --- |
-| `test_tutorial_is_not_a_numbered_level` | 教学关独立于关卡表：不占第 1 关的位置，也不参与编号 | ✅ |
-| `test_tutorial_has_its_own_entry_on_the_menu` | 教学关是菜单上的独立入口：不用解锁，点了就能进 | ✅ |
-| `test_tutorial_steps_advance_one_by_one` | 照着引导点，步骤一步步推进，最后引导结束 | ✅ |
-| `test_tutorial_resyncs_when_player_deviates` | 玩家不按提示点时，引导自动跳过已失效的步骤，不卡住 | ✅ |
-| `test_tutorial_ring_only_drawn_for_current_step` | 引导高亮只在教学关且步骤未走完时出现 | ✅ |
-| `test_tutorial_level_must_have_steps` | 教学关必须带引导步骤，否则界面上没有任何提示 | ✅ |
-| `test_tutorial_is_solvable_and_playable` | 教学关自己也要可解、能一路点到通关 | ✅ |
-| `test_finishing_the_tutorial_scores_nothing` | 教学关走完：不进存档、不解锁、不算分，只引导去第 1 关 | ✅ |
-| `test_tutorial_can_be_failed_and_retried_without_penalty` | 教学关点光生命值也只是重来一遍：不记分、不锁关 | ✅ |
+| `test_solve_simple_level` | 简单关卡能求出通关顺序 | ✅ |
+| `test_two_pieces_facing_each_other_are_unsolvable` | 面对面互挡的死锁被判为无解 | ✅ |
+| `test_solver_order_actually_clears_the_board` | 求出的顺序真的能按它点完 | ✅ |
+| `test_solver_is_monotonic` | 消除一支只让射线更空——单调性（贪心完备的依据） | ✅ |
+| `test_solver_rejects_a_layout_with_no_free_piece` | 开局没有出口的布局判无解 | ✅ |
+| `test_count_free_pieces_matches_board_query` | 统计口径与 `Board` 的查询一致 | ✅ |
+| `test_count_free_pieces_is_monotonic_after_removing_a_piece` | 拿掉一支之后可点数不会减少 | ✅ |
+
+### 4.3 生命值（失误次数）
+
+| 用例 | 验证内容 | 结果 |
+| --- | --- | --- |
+| `test_running_out_of_hearts_fails_the_level` | 点错一次固定扣 1；扣到 0 就失败，不会扣成负数 | ✅ |
+| `test_clicks_after_failure_are_ignored` | 失败之后再点棋盘不再改变状态 | ✅ |
+| `test_hp_left_and_hearts_lost_are_consistent` | `hp_left` 与 `hearts_lost` 两个数始终对得上 | ✅ |
+| `test_hp_follows_the_star_table` | 每关的生命值正好是「星级 → 生命值」表里的值 | ✅ |
+| `test_tutorial_is_separate_from_numbered_levels` | 教学关单独给 6 颗心，不走星级表 | ✅ |
+| `test_draw_hearts_handles_every_count` | 心数从 0 到上限都能画出来，不会越界 | ✅ |
+
+### 4.4 得分机制
+
+| 用例 | 验证内容 | 结果 |
+| --- | --- | --- |
+| `test_base_score_is_stars_times_250` | 基础分 = 星级 × 250 | ✅ |
+| `test_perfect_bonus_is_20_percent_of_base` | 零失误奖励正好是基础分的 20% | ✅ |
+| `test_full_hp_gives_max_score` | 满心通关拿本关满分 | ✅ |
+| `test_zero_hp_gives_zero_score` | 生命值耗尽时本关 0 分 | ✅ |
+| `test_score_never_exceeds_max_and_never_negative` | 越界参数也算不出超过满分或负数的结果 | ✅ |
+| `test_score_is_monotonic_in_remaining_hp` | 剩的心越多分越高（不会出现跳变） | ✅ |
+| `test_losing_one_heart_costs_more_than_nothing` | 丢一颗心确实要付出代价 | ✅ |
+| `test_lost_hearts_helper` | `lost_hearts` 辅助函数正确 | ✅ |
+| `test_total_max_score_sums_levels` | 九关满分合计 = 各关满分之和 | ✅ |
+| `test_max_score_is_stars_times_300` | 每关满分 = 星级 × 300 | ✅ |
+| `test_total_max_score_is_stable` | 总分上限稳定在 **8400**（改关卡时会立刻报警） | ✅ |
+| `test_score_drops_as_hearts_are_lost` | 棋盘自己就知道当前能拿多少分，点错立刻掉 | ✅ |
 
 ### 4.5 关卡数据与难度曲线
 
 | 用例 | 验证内容 | 结果 |
 | --- | --- | --- |
-| `test_level_count_and_difficulty_ramp` | 标准关正好 9 关，且难度整条曲线是递增的 | ✅ |
-| `test_levels_one_to_four_get_harder_step_by_step` | 第 1~4 关是入门段，棋盘只许变大、箭头只许变多、难度分严格上升、星级不下降 | ✅ |
-| `test_difficulty_steps_stay_smooth_across_nine_levels` | 九个关卡的难度一级一级加，任意相邻两关都不能顶出一个大台阶 | ✅ |
-| `test_later_levels_gain_density_not_board_size` | 后半段的难度不靠放大棋盘，而是靠提高密度：尺寸冻结在 9×9，分数公式里也用密度而不是面积 | ✅ |
-| `test_stars_within_range` | 难度星级落在 1~5，且不随难度提高而下降 | ✅ |
-| `test_star_ramp_starts_at_one_and_ends_at_five` | 星级从第 1 关的 1 星升到最后一关的 5 星（教学关不在这条链上） | ✅ |
-| `test_every_level_has_at_least_one_playable_arrow` | 每关开局至少有一支能点的箭头，避免一上手就是死局 | ✅ |
-| `test_level_sizes_are_within_screen` | 关卡尺寸不超过窗口可容纳的范围 | ✅ |
+| `test_level_count_and_names` | 标准关正好 9 关，编号次序正确 | ✅ |
+| `test_every_level_is_solvable` | 九个关卡都存在通关顺序 | ✅ |
+| `test_solution_covers_every_piece_exactly_once` | 参考顺序里每支管道恰好出现一次 | ✅ |
+| `test_boards_are_portrait` | 棋盘一律是**竖长方形**（行数 > 列数），贴合手机竖屏 | ✅ |
+| `test_board_size_grows_with_level_number` | 棋盘逐关变大，11×8 → 26×18 | ✅ |
+| `test_piece_count_grows_with_level_number` | 管道数逐关变多，21 → 46 | ✅ |
+| `test_boards_are_densely_filled` | 铺满率逐关不下降，且整体在 0.9 以上 | ✅ |
+| `test_free_pieces_never_increase` | 开局可点数整体不上升（7 → 3），难度不会被顺手改掉 | ✅ |
+| `test_difficulty_and_stars_never_go_backwards` | 难度分严格上升、星级单调不减 | ✅ |
+| `test_level_rejects_invalid_specs_at_construction` | 构造 `Level` 时就把非法管道写法拦下来 | ✅ |
+| `test_level_rejects_zero_size` | 零尺寸的棋盘直接报错 | ✅ |
+| `test_tutorial_has_guided_steps` | 教学关必须带引导步骤，否则界面上没有任何提示 | ✅ |
+| `test_tutorial_steps_both_explain_ways` | 教学关的步骤既讲「被挡住」也讲「畅通能飞」 | ✅ |
+| `test_tutorial_is_solvable_and_small` | 教学关自己可解，而且足够小（3 支管道） | ✅ |
+| `test_report_shape` | `report_for` 产出的数据结构完整，报告脚本能直接用 | ✅ |
 
-### 4.6 观感回归（画面相关的用例）
+### 4.6 进度与解锁
+
+| 用例 | 验证内容 | 结果 |
+| --- | --- | --- |
+| `test_fresh_progress_only_has_level_one_unlocked` | 全新存档只解锁第 1 关 | ✅ |
+| `test_clearing_a_level_unlocks_the_next_one` | 通关一关才解锁下一关 | ✅ |
+| `test_clearing_is_idempotent` | 重复标记同一关不会出错 | ✅ |
+| `test_mark_all_cleared_opens_everything` | 「全部通关」状态下每关都可进入 | ✅ |
+| `test_scores_keep_the_best_result` | 每关只留最高分，重玩手感差不会冲掉纪录 | ✅ |
+| `test_total_score_sums_best_scores` | 总分 = 各关最高分之和 | ✅ |
+| `test_best_score_of_unknown_level_is_zero` | 不存在的关卡取分返回 0，不抛异常 | ✅ |
+| `test_save_and_load_round_trip` | 存档写到磁盘后能原样读回来 | ✅ |
+| `test_saved_file_is_valid_json_with_version` | 落盘的是合法 JSON，且带 version 字段 | ✅ |
+| `test_corrupt_save_file_falls_back_to_fresh_progress` | 存档损坏时当成空进度，而不是崩溃 | ✅ |
+| `test_save_file_with_wrong_shapes_is_sanitised` | 存档里的字段类型被人改坏时会被清洗掉 | ✅ |
+| `test_reset_clears_everything` | 清空进度后回到只解锁第 1 关，最高分一并清掉 | ✅ |
+
+### 4.7 计时、提示、辅助线与缩放（四个小工具）
+
+| 用例 | 验证内容 | 结果 |
+| --- | --- | --- |
+| `test_timer_only_runs_while_playing` | 只在进行中走秒，结束 / 重开后停住、归零 | ✅ |
+| `test_hint_picks_a_piece_that_can_actually_fly` | 提示指的那一支必须真的能飞出 | ✅ |
+| `test_hint_prefers_unlocking_the_most_pieces` | 提示挑的是「消掉它最能解锁其它管道」的那一支 | ✅ |
+| `test_hint_does_not_corrupt_the_board` | 算提示不会改棋盘状态 | ✅ |
+| `test_use_hint_sets_and_expires_the_highlight` | 提示环到时间自己消失，不会一直挂着 | ✅ |
+| `test_clicking_the_hinted_piece_clears_the_highlight` | 点了被提示的那支之后环立刻收掉 | ✅ |
+| `test_use_hint_outside_a_level_only_toasts` | 不在关卡里点提示只弹一句话，不崩 | ✅ |
+| `test_guides_toggle_updates_the_button_state` | 辅助线开关：状态、按钮 `on` 标记、渲染三者一致 | ✅ |
+| `test_guides_draw_for_every_level` | 九关都能开着辅助线正常画出来 | ✅ |
+| `test_guide_segment_is_parallel_to_the_arrow` | 辅助线必须沿箭头方向（叉积为 0），且长度与射线一致 | ✅ |
+| `test_guide_segment_ends_inside_the_blocking_cell` | 被挡时线的终点落在**射线上被占的那一格**里 | ✅ |
+| `test_guide_segment_disappears_with_the_piece` | 管道飞走之后它的辅助线也要消失 | ✅ |
+| `test_zoom_range_is_respected` / `test_zoom_by_moves_by_one_step` | 缩放范围 60%~180%，步进正确 | ✅ |
+| `test_zoom_is_rounded_to_two_decimals` | 反复缩放不会积累浮点误差 | ✅ |
+| `test_zoom_ratio_reports_current_position` / `test_slider_drag_sets_the_zoom` | 滑杆位置与缩放倍率双向一致 | ✅ |
+| `test_cell_size_scales_with_zoom` / `test_base_cell_is_within_limits` | 格子边长随缩放变化，且有上下限 | ✅ |
+| `test_board_fits_the_viewport_at_default_zoom` | 默认 100% 时棋盘完整落在视口内（不溢出） | ✅ |
+| `test_board_fills_the_viewport_vertically` | 竖屏下棋盘把视口纵向填满，不留空白条 | ✅ |
+| `test_board_never_leaves_the_viewport` | 拖动到极值也不会把棋盘拖出视口 | ✅ |
+| `test_small_board_is_centred` | 小棋盘居中显示，不贴着左上角 | ✅ |
+| `test_pan_is_clamped_back_into_range` | 平移量被夹回合法区间 | ✅ |
+| `test_zoom_sweep_keeps_the_piece_cache_bounded` | 反复缩放不会让管道贴图缓存无限增长 | ✅ |
+| `test_cell_rect_and_center_agree` / `test_cell_at_pos_round_trip` | 格子坐标 ↔ 像素坐标互为逆运算 | ✅ |
+| `test_cell_at_pos_outside_the_board_is_none` | 棋盘外取格返回 None | ✅ |
+
+**「提示」里的「最优」是怎么定义的。** 这个玩法有个性质：点掉一支能飞的管道，
+只会让其它管道的射线更空，不会把自己玩死。所以提示挑的是
+「消掉它之后能连带解锁最多其它管道」的那一支——第一步点对了，后面往往就顺了。
+测试就直接拿这条定义去对：临时把候选从棋盘上摘掉、数一遍还剩几支能飞、再放回去，
+最后和 `Game.best_hint()` 给出的选择逐个比对。
+
+**辅助线为什么不按「能不能飞」上色。** 那条线只帮玩家看清方向关系；
+一旦畅通画绿、被挡画红，等于把答案画在脸上，这一局该有的思考就没了。
+所以两个状态用同一个颜色（`config.COLOR_GUIDE`），
+只有鼠标悬停某支管道时，才用绿 / 红两色高亮那一条具体路径。
+
+**辅助线几何为什么单独抽出来测。** 早先画悬停 / 辅助线时是直接拿
+「挡路那支的**箭头**」（`blocker.head`）当终点的，可一支管道是好几格，
+压在射线上的往往是它的**身子**，箭头可能在很远的另一头——
+于是线会斜穿整个棋盘连到一个方向无关的格子上（悬停到这类管道上还会直接抛 `ValueError`）。
+现在抽成 `Game.guide_segment(piece)`，测试用叉积卡「必须共线」、
+用点积卡「长度与射线一致」、再用矩形包含卡「被挡时终点落在哪一格」，
+三条一起把这处几何钉住。
+
+### 4.8 界面与渲染
+
+| 用例 | 验证内容 | 结果 |
+| --- | --- | --- |
+| `test_piece_surface_is_cached` / `test_clear_caches_drops_piece_surfaces` | 管道贴图有缓存，改配置时能清掉 | ✅ |
+| `test_piece_surface_differs_by_cell_size` | 不同格距得到不同尺寸的贴图 | ✅ |
+| `test_piece_surface_geometry_places_each_cell_correctly` | 贴图里每一格的位置都对得上 | ✅ |
+| `test_piece_surface_big_enough_for_the_whole_pipe` | 贴图装得下整条管道，拐弯也不会被裁掉 | ✅ |
+| `test_piece_color_falls_back_to_palette` | 颜色缺失时回退到调色板，不崩 | ✅ |
+| `test_piece_surface_cache_stays_bounded` | 贴图缓存条数有上限 | ✅ |
+| `test_draw_piece_accepts_alpha_and_offset` | 管道绘制支持半透明与偏移（飞出动画要用） | ✅ |
+| `test_wrap_text_respects_max_width` | 中文折行不超宽 | ✅ |
+| `test_wrap_text_never_starts_a_line_with_punctuation` | 折行后不允许有行以收尾标点开头 | ✅ |
+| `test_wrap_text_handles_short_and_empty_input` | 空串 / 极短文本不会死循环 | ✅ |
+| `test_text_width_and_draw_text_agree` | 量出来的宽度和实际画出来的一致 | ✅ |
+| `test_draw_paragraph_returns_consumed_height` | 段落绘制返回真实占用高度，布局靠它排 | ✅ |
+| `test_slider_helpers_round_trip` / `test_slider_ratio_is_clamped` | 滑杆取值与比例互为逆运算，且被夹在 0~1 | ✅ |
+| `test_slider_track_leaves_room_for_the_knob` | 滑杆两端给滑钮留了位置，不会画到轨道外面 | ✅ |
+| `test_icons_do_not_raise` / `test_stars_and_lock_do_not_raise` / `test_round_rect_alpha_does_not_raise` | 图标、星级、挂锁、圆角半透明矩形都能画 | ✅ |
+| `test_mix_color_endpoints` / `test_lighten_and_darken_move_toward_the_right_end` | 颜色混合与提亮 / 压暗的方向正确 | ✅ |
+| `test_vertical_gradient_size` | 竖向渐变尺寸正确 | ✅ |
+| `test_panel_geometry_holds_content` / `test_overlay_buttons_stay_inside_the_panel` | 结果面板装得下内容，按钮不会跑到面板外 | ✅ |
+| `test_play_buttons_stay_inside_the_window` / `test_menu_buttons_stay_inside_the_window` | 游戏界面与主菜单的按钮都在窗口内 | ✅ |
+| `test_level_cards_stay_inside_the_window` / `test_level_cards_do_not_overlap` | 关卡卡片的 3×3 排布不越界、不重叠 | ✅ |
+| `test_tutorial_bar_is_inside_the_window` / `test_tutorial_bar_does_not_overlap_the_toolbar` / `test_tutorial_viewport_leaves_room_for_the_bar` | 教学讲解条在窗口内、不压工具栏，且棋盘为它让出了位置 | ✅ |
+| `test_menu_demo_specs_match_their_captions` / `test_demo_specs_parse_and_are_deterministic` / `test_demo_colors_are_distinct` | 主菜单上那两张小示例图与说明文字对得上、能解析、颜色可区分 | ✅ |
+| `test_event_handling_smoke` / `test_quit_sets_the_running_flag` | 事件分发能跑完；退出标志正确 | ✅ |
+
+### 4.9 观感回归（画面相关的用例）
 
 这一组是「逻辑全对但看着不对」的问题逼出来的，用来钉住视觉上的几个约定：
 
 | 用例 | 验证内容 | 结果 |
 | --- | --- | --- |
-| `test_every_arrow_takes_its_direction_color` | 箭头颜色只由方向决定：同一方向的箭头颜色完全一致 | ✅ |
-| `test_direction_colors_have_matched_brightness` | 四个方向的颜色感知亮度要拉平（差 1.7 以内），整屏看起来才像「一套」 | ✅ |
-| `test_direction_colors_are_distinct_and_all_used` | 四个方向颜色互不相同，且确实都在关卡里用到 | ✅ |
-| `test_level_colors_are_only_direction_colors` | 一关里出现的颜色只可能来自那 4 个方向色，不会有第 5 种 | ✅ |
-| `test_adjacent_arrows_are_mostly_different_directions` | 每关「相邻且同向」的箭头对不能太多（≤ 28%） | ✅ |
-| `test_same_color_blocks_stay_small` | 同方向的箭头不该连成一大块（最大 4 格） | ✅ |
-| `test_deshuffle_keeps_the_level_solvable_and_no_easier` | 打散工具只换方向：换完仍然可解，开局可点数不会变多 | ✅ |
-| `test_arrow_colors_are_still_decided_only_by_direction` | 打散配色只动关卡布局，不动调色板 | ✅ |
-| `test_hud_has_room_for_the_widest_level` | 信息行四组内容（计时 / 生命值 / 剩余箭头 / 得分）按最宽情形算一遍，居中后不越界、也不压到提示条 | ✅ |
-| `test_wrap_text_keeps_punctuation_off_line_start` | 折行后不允许有行以收尾标点开头（中文排版的基本要求） | ✅ |
-| `test_background_actually_moves` | 背景要真的在动：推进 3 秒后整屏像素确实变了 | ✅ |
-| `test_background_can_still_spawn_a_shooting_star` | 流星机制没烂掉：临时把间隔调短，它确实会被触发（跑完还原配置） | ✅ |
-| `test_every_scene_renders_with_background` | 三个场景都要能带着动态背景正常画出来 | ✅ |
-| `test_heart_surface_matches_the_grid` | 渲染出来的心和网格一一对应：格子在就是实心，不在就是透明 | ✅ |
+| `test_levels_use_a_variety_of_colors` | 一色到底太单调：每关用到的颜色种类要够多 | ✅ |
+| `test_colors_come_from_the_palette` | 管道颜色只可能来自那 12 色调色板 | ✅ |
+| `test_no_two_adjacent_pieces_share_a_color_in_any_level` | 所有关卡都守住「相邻不同色」 | ✅ |
+| `test_every_level_draws_and_saves` | 九关都能画出来并截图 | ✅ |
+| `test_every_level_draws_with_guides_and_hover` | 开着辅助线 + 悬停时也能画 | ✅ |
+| `test_every_level_draws_with_animations_running` | 有动画在跑时也能画 | ✅ |
+| `test_hover_highlight_works_on_any_cell_of_a_pipe` | 悬停管道的任何一格都能高亮整条 | ✅ |
+| `test_hover_on_empty_cell_highlights_nothing` | 悬停空格不该亮任何东西 | ✅ |
+| `test_render_does_not_mutate_the_board` | 画一遍不能改棋盘状态——渲染和逻辑必须完全分开 | ✅ |
+| `test_background_follows_theme` / `test_every_scene_draws` | 背景跟随主题切换，三个场景都画得出来 | ✅ |
 
-### 4.7 计时、提示与辅助线（这一版新加的三个小工具）
-
-| 用例 | 验证内容 | 结果 |
-| --- | --- | --- |
-| `test_play_clock_counts_up_and_resets_on_restart` | 计时从 0 开始、玩的时候往前走，重新开始要归零 | ✅ |
-| `test_play_clock_stops_once_the_level_is_over` | 本关分出胜负之后时钟就停住，不再往上涨 | ✅ |
-| `test_clock_text_formats_minutes_and_hours` | 计时文本是 MM:SS；超过一小时进位成 H:MM:SS，不会显示成 62:05 | ✅ |
-| `test_hint_picks_an_arrow_that_can_really_fly` | 提示指的那一支必须真的能飞出，且和暴力枚举出的最优解一致 | ✅ |
-| `test_hint_ring_fades_away_by_itself` | 提示环到时间自己消失，不会一直挂在棋盘上 | ✅ |
-| `test_hint_when_nothing_can_fly_gives_a_message` | 全场没有能飞的箭头时，提示不崩、给一句话 | ✅ |
-| `test_guides_toggle_keeps_the_button_in_sync` | 辅助线开关：逻辑状态、按钮上的 on 标记、渲染三者一致 | ✅ |
-| `test_guides_survive_a_restart` | 辅助线是玩家偏好，重开本关不该把它关掉 | ✅ |
-| `test_play_layout_areas_do_not_overlap` | 信息栏 / 提示条 / 棋盘 / 工具栏四块区域逐关算一遍，不许互相压住 | ✅ |
-
-**「提示」里的「最优」是怎么定义的。** 这个玩法有个性质：点掉一支能飞的箭头，
-只会让其它箭头的路更空，不会把自己玩死。所以提示挑的是
-「消掉它之后能连带解锁最多其它箭头」的那一支——第一步点对了，后面往往就顺了。
-测试就直接拿这条定义去对：临时把候选从格子上摘掉、数一遍还剩几支能飞、再放回去，
-最后和 `Game.best_hint()` 给出的坐标逐个比对。
-
-**辅助线为什么不按「能不能飞」上色。** 那条线只帮玩家看清方向关系；
-一旦畅通画绿、被挡画红，等于把答案画在脸上，这一局该有的思考就没了。
-所以两个状态用同一个颜色（`config.COLOR_GUIDE`），
-只有鼠标悬停某支箭头时，才用绿 / 红两色高亮那一条具体路径。
-
-**顺带记一笔棋盘的「去底格」改动。** 新版棋盘不再画每一格的底框，只有一片极淡的点阵
-（`app.draw_board()`）。原因是这个玩法的难度来自「在一堆箭头里找出能点的那支」，
+**「去底格」的改动。** 新版棋盘不再画每一格的底框，只有一片极淡的点阵
+（`app.draw_board()`）。原因是这个玩法的难度来自「在一堆管道里找出能点的那支」，
 而几十个空方框会让视线一直被拽住——那是「乱」不是「难」。
+
+**「相邻不同色」的改动。** 参照画面里同色的管道挨在一起会连成一片、看不出有几支，
+所以 `pieces.assign_colors` 用贪心给每支挑一个邻居没用过的颜色。
+注意这和上一版的方向色是两回事：**上一版**「一个方向一个颜色」（上=青绿 下=橙 左=紫 右=粉），
+**这一版**改成糖果色随机、只约束相邻不同色。测试也跟着换成三条：
+颜色必须来自调色板、相邻不许同色、颜色种类不能太少。
 
 ## 五、边界与容错用例
 
 | 用例 | 验证内容 | 结果 |
 | --- | --- | --- |
-| `test_click_empty_cell_is_harmless` | 点到空格子不扣生命值、不改变棋盘 | ✅ |
-| `test_click_outside_board_is_ignored` | 点击负数坐标 / 超界坐标返回 `ignored`，不抛异常 | ✅ |
-| `test_click_after_level_finished_is_ignored` | 本关结束后再点棋盘状态不再变化 | ✅ |
-| `test_deadlock_is_detected` | 同一行两支箭头面对面的死锁布局被判为无解 | ✅ |
-| `test_level_layout_validation` | 行长度不一致 / 含非法字符 / 没有箭头 → 抛 `ValueError` | ✅ |
-| `test_all_levels_are_solvable` | 教学关 + 9 个关卡都存在通关顺序 | ✅ |
-| `test_every_level_can_be_played_to_the_end` | 按求解器顺序实际点击，全部关卡都能打通 | ✅ |
-| `test_corner_arrow_path_never_leaves_the_board` | 角落箭头的路径坐标不越界 | ✅ |
-| `test_reset_restores_the_level` | `reset()` 能完整恢复布局与生命值 | ✅ |
-| `test_victory_condition` | 清空全部箭头后进入通关状态 | ✅ |
-| `test_start_screen_and_start_button` | 开始界面存在，点「开始游戏」能进入第 1 关 | ✅ |
-| `test_menu_explains_the_rules` | 主菜单必须有玩法说明，以及教学关 / 关卡总览 / 退出三个入口 | ✅ |
-| `test_render_every_scene_without_error` | 各个画面都能正常渲染 | ✅ |
-| `test_mouse_click_routes_to_the_board` | 鼠标坐标能正确换算成棋盘格子并触发点击 | ✅ |
-| `test_keyboard_shortcuts` | `R` 重开本关、`Esc` 返回主菜单 | ✅ |
+| `test_clicking_empty_cell_does_nothing` | 点到空格子不扣生命值、不改变棋盘 | ✅ |
+| `test_click_outside_board_is_ignored` | 点击负数 / 超界坐标返回 `ignored`，不抛异常 | ✅ |
+| `test_clicks_after_clearing_are_ignored` | 本关通关后再点棋盘状态不再变化 | ✅ |
+| `test_clicks_after_failure_are_ignored` | 失败后再点棋盘状态不再变化 | ✅ |
+| `test_reset_restores_initial_state` | `reset()` 能完整恢复布局与生命值 | ✅ |
+| `test_starts_in_menu` / `test_enter_levels_and_back` | 启动落在主菜单，主菜单 ↔ 关卡总览能来回切 | ✅ |
+| `test_start_level_rejects_out_of_range` | 用越界的关卡号开局会被拦住 | ✅ |
+| `test_locked_level_cannot_be_started_and_shows_a_toast` | 未解锁的关卡绕过界面也进不去，并给出提示 | ✅ |
+| `test_clicking_a_locked_card_does_not_enter` | 点锁着的卡片不开局 | ✅ |
+| `test_clicking_an_unlocked_card_enters_the_level` | 点已解锁的卡片直接进那一关 | ✅ |
+| `test_escape_returns_to_the_menu` / `test_escape_closes_the_settings_panel_first` | `Esc` 先关浮层、再返回主菜单 | ✅ |
+| `test_r_restarts_the_level` / `test_h_and_g_shortcuts` / `test_plus_and_minus_zoom_shortcuts` | `R` / `H` / `G` / `+` / `-` 快捷键都能用 | ✅ |
+| `test_space_starts_the_game_from_the_menu` | 主菜单与关卡总览里按空格继续挑战 | ✅ |
+| `test_toast_expires` | 提示气泡到时间自己消失 | ✅ |
+| `test_reset_progress_needs_two_clicks` | 「清空进度」要点两次才真的清，避免手滑 | ✅ |
+| `test_settings_overlay_opens_and_closes` / `test_theme_toggle_switches_and_returns` / `test_theme_toggle_works_in_every_scene` | 设置面板开关正常；夜间 / 日间能来回切，各场景都生效 | ✅ |
+| `test_drag_on_board_does_not_count_as_a_click` | 放大后拖动棋盘不会被误判成「点了那支管道」 | ✅ |
+| `test_short_press_is_treated_as_a_click` / `test_tiny_mouse_jitter_still_counts_as_a_click` | 短按与轻微手抖仍然算点击 | ✅ |
+| `test_pressing_a_button_is_not_a_board_drag` / `test_pressing_the_viewport_targets_the_board` | 按在按钮上 / 按在视口上各自路由正确 | ✅ |
+| `test_slider_is_not_draggable_outside_a_level` | 不在关卡里时滑杆不响应 | ✅ |
+| `test_default_zoom_sits_at_one_third_of_the_slider` | 默认 100% 在 60%~180% 区间里正好落在三分之一处 | ✅ |
+| `test_tutorial_runs_through_all_steps` | 照着引导点，4 步依次推进，最后引导结束 | ✅ |
+| `test_tutorial_skips_steps_that_no_longer_apply` | 玩家不按提示点时，失效的步骤被自动跳过，不卡住 | ✅ |
+| `test_tutorial_does_not_score_or_unlock` | 走完教学关：不算分、不解锁、不写存档 | ✅ |
+| `test_tutorial_can_be_replayed` | 教学关随时可以从主菜单重进 | ✅ |
+| `test_tutorial_shows_a_hint_ring_on_the_current_target` | 高亮环只圈在当前该点的那一支上 | ✅ |
+| `test_final_level_clear_shows_all_clear` / `test_next_level_advances_after_winning` | 打通最后一关弹「全部通关」面板；点「下一关」正确推进 | ✅ |
+| `test_click_cell_returns_none_while_an_overlay_is_open` | 结果面板打开时点棋盘无效 | ✅ |
 
 ---
 
 ## 六、完整测试日志
 
 ```
-test_a_worse_replay_keeps_the_old_record ... ok   重玩打得差不会把最高分冲掉（存档只记最好的一次）。
-test_adjacent_arrows_are_mostly_different_directions ... ok   每关「相邻且同向」的箭头对不能太多。
-test_all_levels_are_solvable ... ok   作业要求：每个关卡都必须存在合理的通关顺序。
-test_all_levels_can_be_cleared_in_order ... ok   按顺序把 9 关全部打通，验证解锁链路与关卡数据整体可用。
-test_arrow_colors_are_still_decided_only_by_direction ... ok   打散配色只动关卡布局，不动调色板：一个方向仍然只有一种颜色。
-test_background_actually_moves ... ok   背景要真的在动：时间推进之后，整屏像素确实变了。
-test_background_can_still_spawn_a_shooting_star ... ok   流星机制没烂掉：把间隔调短之后，它确实会被触发。
-test_blocked_click_pops_a_broken_heart_not_hanzi ... ok   点错时飘出来的是一颗「碎掉的像素心」，不是「失去一心」四个汉字。
-test_board_exposes_a_live_score ... ok   棋盘自己就知道当前能拿多少分，HUD 直接用这个数（点错立刻掉）。
-test_broken_heart_animation_renders_and_fades_out ... ok   心碎动画：两半分开、心往上飘、末端淡出，每一帧都画得出来。
-test_broken_scores_in_the_save_file_are_ignored ... ok   存档里的分数被人手改坏了（非数字、负数）时，只丢掉坏的那几条。
-test_cleared_count_next_index_and_all_cleared ... ok   统计与「下一关」的取值。
-test_clearing_a_level_unlocks_the_next_one ... ok   通关之后，下一关立刻变成可进入。
-test_clearing_unlocks_the_next_level ... ok   通关一关之后才解锁下一关。
-test_clearing_without_mistakes_pays_the_full_score ... ok   零失误通关：拿满分、记进存档，结算面板写出完美奖励。
-test_click_after_level_finished_is_ignored ... ok   本关结束后再点棋盘不再改变任何状态。
-test_click_empty_cell_is_harmless ... ok   点到空格子不扣生命值，也不改变棋盘。
-test_click_outside_board_is_ignored ... ok   点到棋盘外不会抛异常。
-test_clicking_a_locked_card_only_shows_a_hint ... ok   点未解锁的卡片不会开局，只提示先通关哪一关。
-test_clicking_an_unlocked_card_starts_that_level ... ok   点已解锁的卡片直接开局。
-test_clock_text_formats_minutes_and_hours ... ok   计时文本：MM:SS；超过一小时进位成 H:MM:SS，不会显示成 62:05。
-test_corner_arrow_path_never_leaves_the_board ... ok   路径检测返回的坐标必须全部落在棋盘内。
-test_deadlock_is_detected ... ok   互相阻挡的死锁布局必须被判定为无解。
-test_deshuffle_keeps_the_level_solvable_and_no_easier ... ok   打散工具只换方向：换完仍然可解，开局可点数不会变多。
-test_difficulty_steps_stay_smooth_across_nine_levels ... ok   九个关卡的难度是一级一级加的，任意相邻两关都不能顶出一个大台阶。
-test_direction_colors_are_distinct_and_all_used ... ok   四个方向颜色互不相同，且确实都在关卡里用到。
-test_direction_colors_have_matched_brightness ... ok   四个方向的颜色感知亮度要拉平，整屏看起来才像「一套」。
-test_every_arrow_takes_its_direction_color ... ok   箭头颜色只由方向决定：同一方向的箭头颜色完全一致。
-test_every_level_can_be_played_to_the_end ... ok   按求解器给出的顺序实际点击，每个关卡都能通关。
-test_every_level_has_at_least_one_playable_arrow ... ok   每个关卡开局都必须至少有一支能点的箭头，否则玩家一上手就是死局。
-test_every_mistake_costs_points ... ok   同一关里，失去的心越多得分越低，且是严格下降。
-test_every_mistake_lowers_the_score ... ok   丢一颗心，HUD 上的得分立刻按比例下降，最终结算也跟着少。
-test_every_scene_renders_with_background ... ok   三个场景都要能带着动态背景正常画出来。
-test_fail_when_hp_used_up ... ok   生命值用尽后棋盘进入失败状态。
-test_failing_a_level_scores_zero ... ok   生命值耗尽：本关 0 分，也不写进存档。
-test_failing_the_level_is_worth_nothing ... ok   生命值耗尽时本关 0 分（越界的参数也不会算出一个负数）。
-test_finishing_the_tutorial_scores_nothing ... ok   教学关走完：不进存档、不解锁、不算分，只引导去第 1 关。
-test_full_score_follows_the_difficulty_stars ... ok   满分 = 星级 × 300（基础分 250 + 20% 完美奖励）。
-test_guides_survive_a_restart ... ok   辅助线是玩家偏好：重开本关不该把它关掉。
-test_guides_toggle_keeps_the_button_in_sync ... ok   辅助线开关：状态、按钮上的 on 标记、渲染三者要一致。
-test_heart_icon_is_a_pixel_art_grid ... ok   生命值图标是「像素心」：规整网格、左右对称、顶部中间留凹口。
-test_heart_surface_matches_the_grid ... ok   渲染出来的心和网格一一对应：格子在就是实心，不在就是透明。
-test_hint_picks_an_arrow_that_can_really_fly ... ok   提示高亮的那一支，必须是当下真的能飞出去的箭头、而且是最优的那一支。
-test_hint_ring_fades_away_by_itself ... ok   提示环到时间自己消失，不会一直挂在棋盘上。
-test_hint_when_nothing_can_fly_gives_a_message ... ok   一开局就没有能飞的箭头时，提示按钮不能崩，要给一句话。
-test_hp_drops_one_per_blocked_click ... ok   点错一次固定扣 1 点生命值；扣到 0 就失败，且不会再往下扣成负数。
-test_hp_is_granted_by_difficulty ... ok   每关的生命值必须正好是「星级 → 生命值」表里对应的值。
-test_hud_has_room_for_the_widest_level ... ok   HUD 信息行排得下：最宽的一组内容（7 颗心 + 四位数得分）也不会越界。
-test_hud_hearts_are_pixel_hearts ... ok   HUD 那一排生命值画的也是像素心：还有的用亮色、失去的用暗色。
-test_keyboard_shortcuts ... ok   R 重开本关、Esc 返回主菜单。
-test_later_levels_gain_density_not_board_size ... ok   后半段的难度不靠放大棋盘，而是靠提高密度。
-test_level_colors_are_only_direction_colors ... ok   一关里出现的颜色只可能来自那 4 个方向色，不会有第 5 种。
-test_level_count_and_difficulty_ramp ... ok   标准关正好 9 关，且难度整条曲线是递增的。
-test_level_layout_validation ... ok   布局不合法时应当直接报错，避免出现隐蔽的坏关卡。
-test_level_select_lists_all_levels ... ok   关卡总览里每张卡片对应一个关卡。
-test_level_sizes_are_within_screen ... ok   关卡尺寸不能超过窗口能容纳的范围。
-test_levels_one_to_four_get_harder_step_by_step ... ok   第 1~4 关是入门段，难度必须一关比一关高，而且步子要看得出来。
-test_locked_level_cannot_be_started ... ok   没通关前一关时，后面的关卡进不去，并且给出提示。
-test_lost_heart_is_an_empty_outline ... ok   已经失去的那颗心只剩外沿：内部镂空，和实心的一眼能区分。
-test_mark_cleared_is_idempotent ... ok   重复标记同一关不会出错，也不重复写盘。
-test_menu_explains_the_rules ... ok   主菜单必须有玩法说明，以及教学关 / 关卡总览 / 退出三个入口。
-test_missing_or_broken_save_file_is_tolerated ... ok   存档不存在或内容损坏时，应当当成空进度而不是崩溃。
-test_mouse_click_routes_to_the_board ... ok   鼠标点击棋盘坐标能正确换算到对应的格子。
-test_old_save_without_scores_still_loads ... ok   老存档（version 1，没有 scores 字段）不能因为升级格式丢进度。
-test_one_mistake_hurts_less_on_harder_levels ... ok   点错一次的代价逐关变小——这就是「容错越来越高」的量化说法。
-test_only_first_level_unlocked_at_start ... ok   全新存档只解锁第 1 关。
-test_perfect_bonus_only_when_nothing_is_lost ... ok   零失误奖励只在满心通关时给，而且正好是基础分的 20%。
-test_play_clock_counts_up_and_resets_on_restart ... ok   计时从 0 开始、玩的时候往前走，重新开始要归零。
-test_play_clock_stops_once_the_level_is_over ... ok   本关分出胜负之后时钟就停住，不再往上涨。
-test_play_layout_areas_do_not_overlap ... ok   游戏界面那几块区域不许互相压住：信息栏 / 提示条 / 棋盘 / 工具栏。
-test_primary_button_follows_progress ... ok   主按钮文字会随进度变化：从「开始游戏」到「继续第 N 关」。
-test_render_every_scene_without_error ... ok   各个画面都能正常渲染（顺便覆盖绘制代码）。
-test_reset_clears_everything ... ok   清空进度后回到只解锁第 1 关的状态，最高分也一并清掉，且已经落盘。
-test_reset_progress_needs_two_clicks ... ok   「清空进度」要点两次才真的清，避免手滑。
-test_reset_restores_the_level ... ok   reset() 把箭头布局和生命值都恢复原样。
-test_same_color_blocks_stay_small ... ok   同方向的箭头不该连成一大块。
-test_save_and_reload ... ok   存档写到磁盘后能被重新读回来。
-test_scores_are_recorded_and_only_the_best_one_wins ... ok   每关只留最高分：重玩手感差不会把纪录冲掉。
-test_skipping_a_level_does_not_unlock_further ... ok   跳着通关不算数：第 2 关没过，第 3 关依然锁着。
-test_star_ramp_starts_at_one_and_ends_at_five ... ok   星级从第 1 关的 1 星升到最后一关的 5 星（教学关不在这条链上）。
-test_stars_within_range ... ok   难度星级必须落在 1~5 之间，且不随难度提高而下降。
-test_start_screen_and_start_button ... ok   开始界面存在，点「开始游戏」能进入第 1 关。
-test_t01_click_free_arrow_flies_out ... ok   T01 点击前方无阻挡的箭头 -> 箭头飞出棋盘并消失。
-test_t02_click_blocked_arrow_costs_hp ... ok   T02 点击前方有阻挡的箭头 -> 箭头不消失，生命值减 1。
-test_t03_arrows_on_the_edge_fly_out_safely ... ok   T03 点击边缘且朝向棋盘外的箭头 -> 正常消失，不发生越界错误。
-test_t04_clear_level_then_go_to_next_level ... ok   T04 消除本关全部箭头 -> 显示通关并进入下一关。
-test_t04_clearing_the_last_level_shows_all_clear ... ok   打完最后一关显示「全部通关」。
-test_t05_fail_then_restart ... ok   T05 生命值耗尽 -> 显示失败并允许重新开始。
-test_t06_restart_mid_game ... ok   T06 游戏进行中重新开始 -> 箭头布局和生命值都恢复。
-test_tolerance_grows_from_first_level_to_last ... ok   生命值上限整体不下降，最后一关要明显比第 1 关宽容。
-test_total_full_score_is_the_sum_of_all_levels ... ok   全部关卡的满分加起来等于总分上限（结算面板里的「总分 x / y」用它）。
-test_total_score_is_the_sum_of_each_levels_best ... ok   总分 = 各关最高分之和；不存在关卡里的分数不计入。
-test_tutorial_can_be_failed_and_retried_without_penalty ... ok   教学关点光生命值也只是重来一遍：不记分、不锁关。
-test_tutorial_has_its_own_entry_on_the_menu ... ok   教学关是菜单上的独立入口：不用解锁，点了就能进。
-test_tutorial_is_a_forgiving_sandbox ... ok   教学关是给人放胆点的沙盒，生命值要比同星级的关卡宽裕。
-test_tutorial_is_not_a_numbered_level ... ok   教学关独立于关卡表：不占第 1 关的位置，也不参与编号。
-test_tutorial_is_solvable_and_playable ... ok   教学关自己也要可解、能一路点到通关。
-test_tutorial_level_must_have_steps ... ok   教学关必须带引导步骤，否则界面上会没有任何提示。
-test_tutorial_resyncs_when_player_deviates ... ok   玩家不按提示点时，引导会自动跳过已经失效的步骤，而不是卡住。
-test_tutorial_ring_only_drawn_for_current_step ... ok   引导高亮只在教学关且步骤未走完时出现（顺带覆盖绘制代码）。
-test_tutorial_steps_advance_one_by_one ... ok   照着引导点，步骤会一步步推进，最后引导结束。
-test_victory_condition ... ok   清空全部箭头后棋盘进入通关状态。
-test_wrap_text_keeps_punctuation_off_line_start ... ok   折行后不允许有行以收尾标点开头（中文排版的基本要求）。
+test_animations_draw_without_raising ... ok
+test_floating_heart_rises_and_ends ... ok
+test_floating_heart_splits_into_two_halves ... ok   「心碎」动画把整颗心切成左右两半，两半拼起来必须还是整颗心。
+test_floating_text_rises_and_ends ... ok
+test_fly_out_alpha_stays_opaque_early_then_fades ... ok
+test_fly_out_finishes_and_keeps_moving_away ... ok
+test_fly_out_respects_direction ... ok
+test_impact_fades_out_and_ends ... ok
+test_impact_offset_moves_along_its_direction ... ok
+test_impact_tint_is_cached_per_level ... ok
+test_impact_tint_moves_toward_red ... ok   被撞的管道要真的泛红——这是「点错了」最直接的反馈。
+test_background_follows_theme ... ok
+test_every_scene_draws ... ok
+test_adjacent_pieces_never_share_a_color ... ok   相邻管道同色会「糊成一片」，看不出是几支——所有关卡都要守住这条。
+test_assign_colors_gives_every_piece_a_palette_color ... ok
+test_assign_colors_is_deterministic ... ok   同样的布局必须得到同样的配色，否则每次打开画面都不一样。
+test_build_grid_marks_owner_index ... ok
+test_clearing_every_piece_clears_the_level ... ok
+test_click_outside_board_is_ignored ... ok
+test_click_result_carries_the_ray_path ... ok   点击结果要带上「箭头前方直到边界」的格子，界面靠它画路径提示。
+test_clicking_any_cell_of_a_pipe_selects_the_whole_pipe ... ok   点管道的哪一格都算选中它——玩家看到的是整条管道。
+test_clicking_empty_cell_does_nothing ... ok
+test_clicks_after_clearing_are_ignored ... ok
+test_clicks_after_failure_are_ignored ... ok
+test_edge_ray_does_not_run_off_the_board ... ok   边上的射线只到边界为止，不能越界算出负坐标或越界的格子。
+test_faces_own_body_false_for_clean_shape ... ok
+test_find_blocker_ignores_the_pieces_own_body ... ok   管道绕回来贴着自己的箭头前方时，不算「被自己挡住」。
+test_format_piece_merges_repeated_steps ... ok
+test_format_piece_rejects_diagonal_step ... ok
+test_format_piece_round_trip ... ok   format_piece 是 parse_piece 的逆运算，生成器靠它打印布局。
+test_hp_left_and_hearts_lost_are_consistent ... ok
+test_parse_accepts_lowercase_path_and_extra_spaces ... ok   关卡数据是手写与脚本混着的，大小写与多余空格都要能吃下。
+test_parse_default_segment_count_is_one ... ok   字母后面不写数字就是走一格。
+test_parse_downward_piece_is_not_broken_by_upper ... ok   朝下的 'v' 不能被 upper() 变成 'V' 而解析失败。
+test_parse_multi_segment_path ... ok   路径按「方向字母 + 格数」累加，从尾到头有序。
+test_parse_rejects_bad_specs ... ok
+test_parse_single_cell_piece ... ok   不带路径段的写法 = 只占一格。
+test_path_to_blocker_returns_the_whole_ray_when_clear ... ok
+test_path_to_blocker_stops_at_the_nearest_piece ... ok   悬停路径要截断在挡路那一格，再往后跟「为什么飞不出去」无关。
+test_piece_head_tail_and_length ... ok
+test_piece_ray_stops_at_board_edge ... ok   射线从箭头出发、直到棋盘边界，且**不含箭头自己**。
+test_ray_covers_corner_pieces_correctly ... ok
+test_reset_restores_initial_state ... ok
+test_running_out_of_hearts_fails_the_level ... ok
+test_score_drops_as_hearts_are_lost ... ok   棋盘上的 score 是「此刻通关能拿多少」，丢心就往下掉。
+test_t01_free_piece_flies_out_and_disappears ... ok
+test_t02_blocked_piece_loses_one_heart ... ok
+test_t02_blocker_is_the_nearest_piece_on_the_ray ... ok   射线上可能有好几支管道，挡住它的应当是**最先遇到**的那一支。
+test_t02_blocking_piece_moves_away_then_it_can_fly ... ok   把挡路的点掉之后，原本被挡的那支就能飞了（连锁的最小例子）。
+test_t03_pieces_at_edges_face_outward_and_can_fly ... ok
+test_validate_layout_accepts_good_level ... ok
+test_validate_layout_rejects_broken_path ... ok   路径必须逐格相邻，不能跳格。
+test_validate_layout_rejects_empty_level ... ok
+test_validate_layout_rejects_head_direction_mismatch ... ok   最后一段必须和箭头方向一致，否则画出来的箭头会歪在拐角上。
+test_validate_layout_rejects_out_of_board ... ok
+test_validate_layout_rejects_overlap ... ok
+test_validate_layout_rejects_piece_facing_own_body ... ok   箭头正对着自己的管道 -> 永远飞不出去，必须在关卡校验里拦掉。
+test_validate_layout_rejects_self_crossing ... ok
+test_base_cell_is_within_limits ... ok
+test_board_fills_the_viewport_vertically ... ok   竖屏棋盘应当把视口高度基本占满，否则上下会各空出一条。
+test_board_fits_the_viewport_at_default_zoom ... ok
+test_board_never_leaves_the_viewport ... ok
+test_cell_at_pos_outside_the_board_is_none ... ok
+test_cell_at_pos_round_trip ... ok
+test_cell_rect_and_center_agree ... ok
+test_cell_size_scales_with_zoom ... ok
+test_click_cell_returns_none_while_an_overlay_is_open ... ok
+test_clicking_a_blocked_pipe_shows_a_floating_heart ... ok
+test_clicking_a_free_pipe_starts_a_fly_animation ... ok
+test_clicking_a_locked_card_does_not_enter ... ok
+test_clicking_an_unlocked_card_enters_the_level ... ok
+test_clicking_empty_cell_does_nothing_in_game ... ok
+test_clicking_outside_the_board_does_nothing ... ok
+test_clicking_the_hinted_piece_clears_the_highlight ... ok
+test_default_zoom_sits_at_one_third_of_the_slider ... ok   默认缩放是 100%，它对应的滑杆位置应当就是三分之一处。
+test_demo_colors_are_distinct ... ok
+test_demo_specs_parse_and_are_deterministic ... ok
+test_drag_on_board_does_not_count_as_a_click ... ok   拖动查看棋盘时松手不能顺手点掉一支管道。
+test_enter_levels_and_back ... ok
+test_escape_closes_the_settings_panel_first ... ok
+test_escape_returns_to_the_menu ... ok
+test_event_handling_smoke ... ok   走一遍真实事件分发：移动 / 按下 / 松开 / 按键，都不能抛异常。
+test_every_scene_draws_without_raising ... ok
+test_final_level_clear_shows_all_clear ... ok
+test_guide_segment_disappears_with_the_piece ... ok   已经飞走的管道不再有辅助线。
+test_guide_segment_ends_inside_the_blocking_cell ... ok   被挡住时，辅助线的终点要落在**射线上被占的那一格**里。
+test_guide_segment_is_parallel_to_the_arrow ... ok   辅助线必须和箭头同向、且在射线不为空时有长度。
+test_guides_draw_for_every_level ... ok
+test_guides_toggle_updates_the_button_state ... ok
+test_h_and_g_shortcuts ... ok
+test_hint_does_not_corrupt_the_board ... ok   回归测试：提示的试算必须把 grid 原样还原。
+test_hint_picks_a_piece_that_can_actually_fly ... ok
+test_hint_prefers_unlocking_the_most_pieces ... ok   提示要挑「点掉之后能连带解锁最多」的那一支，而不是随便一支。
+test_level_cards_do_not_overlap ... ok
+test_level_cards_stay_inside_the_window ... ok
+test_locked_level_cannot_be_started_and_shows_a_toast ... ok
+test_menu_buttons_stay_inside_the_window ... ok
+test_menu_demo_specs_match_their_captions ... ok   主菜单那两张小图的画面必须和说明文字一致。
+test_next_level_advances_after_winning ... ok
+test_overlay_buttons_stay_inside_the_panel ... ok
+test_pan_is_clamped_back_into_range ... ok   拖到边界之后 pan 要记回实际偏移，否则往回拖有一段是空转。
+test_panel_geometry_holds_content ... ok   结算面板要在 64 像素高的窗口里放得下，还要在窗口内。
+test_play_buttons_stay_inside_the_window ... ok
+test_plus_and_minus_zoom_shortcuts ... ok
+test_pressing_a_button_is_not_a_board_drag ... ok
+test_pressing_the_viewport_targets_the_board ... ok
+test_quit_sets_the_running_flag ... ok
+test_r_restarts_the_level ... ok
+test_reset_progress_needs_two_clicks ... ok   清空进度是不可逆的，第一次点只提醒、第二次才真的清。
+test_settings_overlay_opens_and_closes ... ok
+test_short_press_is_treated_as_a_click ... ok
+test_slider_drag_sets_the_zoom ... ok   按住滑杆拖动：滑杆中点对应 120%，两端是最小 / 最大。
+test_slider_is_not_draggable_outside_a_level ... ok
+test_small_board_is_centred ... ok
+test_space_starts_the_game_from_the_menu ... ok
+test_start_level_rejects_out_of_range ... ok
+test_starting_a_level_sets_up_the_board ... ok
+test_starts_in_menu ... ok
+test_t04_clear_level_then_go_to_next_level ... ok   T04：清空本关全部管道 -> 弹「通关」面板并记分 -> 点「下一关」进入下一关。
+test_t05_fail_then_restart ... ok   T05：把生命值点光 -> 弹「失败」面板且不得分 -> 「重新开始本关」能接着玩。
+test_t06_restart_mid_game ... ok   T06：进行中点掉一支、再故意点错一次，重新开始后布局与生命值都要恢复。
+test_theme_toggle_switches_and_returns ... ok
+test_theme_toggle_works_in_every_scene ... ok
+test_timer_only_runs_while_playing ... ok   分出胜负之后时钟要停下来，否则玩家盯着结算面板那几秒用时还在涨。
+test_tiny_mouse_jitter_still_counts_as_a_click ... ok   手抖了几像素不该被当成拖动——阈值是 DRAG_THRESHOLD。
+test_toast_expires ... ok
+test_tutorial_bar_does_not_overlap_the_toolbar ... ok
+test_tutorial_bar_is_inside_the_window ... ok
+test_tutorial_can_be_replayed ... ok
+test_tutorial_does_not_score_or_unlock ... ok
+test_tutorial_runs_through_all_steps ... ok   教学关的每一步期望值都必须和实际结果对上——教程骗人会直接误导玩家。
+test_tutorial_shows_a_hint_ring_on_the_current_target ... ok
+test_tutorial_skips_steps_that_no_longer_apply ... ok   玩家完全可以乱点；不管怎么点，引导都不能指着一支已经飞走的管道。
+test_tutorial_viewport_leaves_room_for_the_bar ... ok   讲解条要占掉一块地方，棋盘视口得相应让出来，否则会叠在一起。
+test_use_hint_outside_a_level_only_toasts ... ok
+test_use_hint_sets_and_expires_the_highlight ... ok
+test_zoom_by_moves_by_one_step ... ok
+test_zoom_is_rounded_to_two_decimals ... ok   zoom 量化到两位小数：滑杆连着拖不会留下几百个无意义的中间值。
+test_zoom_range_is_respected ... ok
+test_zoom_ratio_reports_current_position ... ok
+test_zoom_sweep_keeps_the_piece_cache_bounded ... ok   一路拖过整条滑杆也不能把贴图缓存撑爆。
+test_board_size_grows_with_level_number ... ok
+test_boards_are_densely_filled ... ok   这一版棋盘是密密麻麻铺满的（参照画面就是这样）。
+test_boards_are_portrait ... ok   九关都取竖长方形（行数 > 列数）。
+test_difficulty_and_stars_never_go_backwards ... ok
+test_every_level_is_solvable ... ok
+test_free_pieces_never_increase ... ok   开局可点数逐关不增：这是玩家真正感觉得到的难度。
+test_hp_follows_the_star_table ... ok
+test_level_count_and_names ... ok
+test_level_rejects_invalid_specs_at_construction ... ok   关卡数据写错时要在 import 阶段就炸，而不是等到玩家点进去。
+test_level_rejects_zero_size ... ok
+test_max_score_is_stars_times_300 ... ok
+test_piece_count_grows_with_level_number ... ok   管道数整体上一路变多。
+test_report_shape ... ok
+test_solution_covers_every_piece_exactly_once ... ok
+test_total_max_score_is_stable ... ok
+test_tutorial_has_guided_steps ... ok
+test_tutorial_is_separate_from_numbered_levels ... ok   教学关不占编号、不在 LEVELS 里，主菜单上有单独入口。
+test_tutorial_is_solvable_and_small ... ok
+test_tutorial_steps_both_explain_ways ... ok   教学关必须把「能飞」和「被挡」两种情形各讲一遍。
+test_best_score_of_unknown_level_is_zero ... ok
+test_clearing_a_level_unlocks_the_next_one ... ok
+test_clearing_is_idempotent ... ok
+test_corrupt_save_file_falls_back_to_fresh_progress ... ok   存档坏了不能让游戏打不开——退回全新进度就好。
+test_fresh_progress_only_has_level_one_unlocked ... ok
+test_mark_all_cleared_opens_everything ... ok
+test_reset_clears_everything ... ok
+test_save_and_load_round_trip ... ok
+test_save_file_with_wrong_shapes_is_sanitised ... ok
+test_saved_file_is_valid_json_with_version ... ok
+test_scores_keep_the_best_result ... ok   重玩只留最高分，不会越玩越低。
+test_total_score_sums_best_scores ... ok
+test_clear_caches_drops_piece_surfaces ... ok
+test_draw_dashed_line_does_not_raise ... ok
+test_draw_hearts_handles_every_count ... ok
+test_draw_paragraph_returns_consumed_height ... ok
+test_draw_piece_accepts_alpha_and_offset ... ok
+test_draw_slider_does_not_raise ... ok
+test_icons_do_not_raise ... ok
+test_lighten_and_darken_move_toward_the_right_end ... ok
+test_mix_color_endpoints ... ok
+test_piece_color_falls_back_to_palette ... ok
+test_piece_surface_big_enough_for_the_whole_pipe ... ok
+test_piece_surface_cache_stays_bounded ... ok   缓存上限是硬要求：缩放滑杆一路拖过去会生成上百个格距。
+test_piece_surface_differs_by_cell_size ... ok
+test_piece_surface_geometry_places_each_cell_correctly ... ok   贴图 + 偏移必须能把每一格摆回它该在的位置。
+test_piece_surface_is_cached ... ok   同一支管道重复取贴图必须命中缓存，否则每帧都在重新渲染。
+test_round_rect_alpha_does_not_raise ... ok
+test_slider_helpers_round_trip ... ok
+test_slider_ratio_is_clamped ... ok
+test_slider_track_leaves_room_for_the_knob ... ok
+test_stars_and_lock_do_not_raise ... ok
+test_text_width_and_draw_text_agree ... ok
+test_vertical_gradient_size ... ok
+test_wrap_text_handles_short_and_empty_input ... ok
+test_wrap_text_never_starts_a_line_with_punctuation ... ok   逐字折行很容易把句号甩到下一行，中文排版上很难看。
+test_wrap_text_respects_max_width ... ok
+test_base_score_is_stars_times_250 ... ok
+test_full_hp_gives_max_score ... ok
+test_losing_one_heart_costs_more_than_nothing ... ok   丢一颗心必须真的掉分，否则「别点错」这件事就没有反馈。
+test_lost_hearts_helper ... ok
+test_perfect_bonus_is_20_percent_of_base ... ok
+test_score_is_monotonic_in_remaining_hp ... ok
+test_score_never_exceeds_max_and_never_negative ... ok
+test_total_max_score_sums_levels ... ok
+test_zero_hp_gives_zero_score ... ok
+test_count_free_pieces_is_monotonic_after_removing_a_piece ... ok   每消掉一支，可点数只可能变多或不变（不会变少）。
+test_count_free_pieces_matches_board_query ... ok
+test_solve_simple_level ... ok
+test_solver_is_monotonic ... ok   消除一支管道只会让别的射线更空，所以「能飞」不会因为等待而失效。
+test_solver_order_actually_clears_the_board ... ok   求解器给出的顺序拿去真的点一遍，必须能清空。
+test_solver_rejects_a_layout_with_no_free_piece ... ok   一个连开局都点不动的循环，应当被判定为无解。
+test_two_pieces_facing_each_other_are_unsolvable ... ok   互相指着的两支谁也飞不出去——求解器必须报「无解」而不是死循环。
+test_colors_come_from_the_palette ... ok
+test_every_level_draws_and_saves ... ok   每个关卡都完整画一遍——渲染报错在这一步就该暴露。
+test_every_level_draws_with_animations_running ... ok   动画播到一半时也要能画——撞击那支的染色贴图只在闪得厉害时才用到。
+test_every_level_draws_with_guides_and_hover ... ok   辅助线 + 悬停高亮一起上的时候最容易漏画或画错层，逐关过一遍。
+test_hover_highlight_works_on_any_cell_of_a_pipe ... ok
+test_hover_on_empty_cell_highlights_nothing ... ok
+test_levels_use_a_variety_of_colors ... ok   一支一色但整体太单调也不行——每关用到的颜色种类要够多。
+test_no_two_adjacent_pieces_share_a_color_in_any_level ... ok
+test_render_does_not_mutate_the_board ... ok   画一遍不能改棋盘状态——渲染和逻辑必须完全分开。
 ```
 
 ---
 
 ## 七、关卡可解性校验
 
-执行 `python tools/verify_levels.py`（完整输出，含每关的布局图与参考通关顺序）：
+执行 `python tools/verify_levels.py`（完整输出，含每关的布局图与参考通关顺序）。
+布局图里 `.` 是空格、`o` 是管道身子、`^v<>` 是箭头：
 
 ```
 ==============================================================================
@@ -374,154 +600,254 @@ test_wrap_text_keeps_punctuation_off_line_start ... ok   折行后不允许有�
 ==============================================================================
 
 教学关（主菜单独立入口：不计分、不占关卡编号、不用解锁）
-          棋盘 4×5   箭头 3 支   密度 0.15   开局可点 2 支   生命值 6 颗
+             棋盘 5×5   管道  3 支   密度 0.32   开局可点 2 支
+         难度 ★   生命值 6 颗   本关满分 不计分
 ------------------------------------------------------------------------------
-   0 | . . . . .
-   1 | . > . v .
-   2 | . . . . .
-   3 | . . ^ . .
+    0 | ....o
+    1 | ....v
+    2 | oo>o.
+    3 | ...o.
+    4 | ...v.
 ------------------------------------------------------------------------------
    [OK] 可解，共 3 步
-   参考顺序：(1,3)下 -> (3,2)上 -> (1,1)右
-   引导步骤：4 步（点哪里、为什么，都在关卡里的黄色高亮环上）
+   参考顺序：(4,3)下 -> (1,4)下 -> (2,2)右
+   引导步骤：4 步（点哪里、为什么，都在关卡里的高亮环上）
 
-第  1 关  初次拉弓   棋盘 5×5   箭头  4 支   密度 0.16   开局可点 3 支
-         难度 ★   生命值 4 颗（容错随难度递增）   本关满分 300 分
+第  1 关  初次拉弓   棋盘 11×8   管道 21 支   密度 0.97   开局可点 7 支
+         难度 ★   生命值 4 颗   本关满分 300 分
 ------------------------------------------------------------------------------
-   0 | . . v . .
-   1 | . . . . .
-   2 | . ^ . . .
-   3 | . . . . >
-   4 | . . v . .
+    0 | ^^^^oo<o
+    1 | oo<oo<oo
+    2 | oo.^<ooo
+    3 | oo^ooooo
+    4 | ooooooo>
+    5 | ^o>oooo>
+    6 | oooo^oo>
+    7 | ^.ooo^.^
+    8 | oooooooo
+    9 | ^oooooo^
+   10 | oooooooo
 ------------------------------------------------------------------------------
-   [OK] 可解，共 4 步
-   参考顺序：(2,1)上 -> (3,4)右 -> (4,2)下 -> (0,2)下
+   [OK] 可解，共 21 步
+   参考顺序：(0,0)上 -> (5,7)右 -> (0,1)上 -> (4,7)右 -> (6,7)右 -> (0,2)上 -> (0,3)上 -> (1,2)左 -> (0,6)左 -> (1,5)左 -> (3,2)上 -> (2,3)上 -> (7,7)上 -> (2,4)左 -> (9,7)上 -> (7,5)上 -> (6,4)上 -> (5,2)右 -> (5,0)上 -> (7,0)上 -> (9,0)上
 
-第  2 关  交叉路口   棋盘 5×5   箭头  4 支   密度 0.16   开局可点 1 支
-         难度 ★★   生命值 4 颗（容错随难度递增）   本关满分 600 分
+第  2 关  交叉路口   棋盘 13×9   管道 23 支   密度 0.99   开局可点 6 支
+         难度 ★   生命值 4 颗   本关满分 300 分
 ------------------------------------------------------------------------------
-   0 | . . . . .
-   1 | . > . v .
-   2 | . . . . .
-   3 | . ^ . . <
-   4 | . . . . .
+    0 | o>o>^^^^^
+    1 | oooo>oooo
+    2 | ooooo>ooo
+    3 | ooooo.o^>
+    4 | oooooooo^
+    5 | oo>ooo^oo
+    6 | oo>^ooooo
+    7 | ooooooo^o
+    8 | ^^oooooo^
+    9 | ooooooooo
+   10 | ooooooo^^
+   11 | ^oooooooo
+   12 | ooooooooo
 ------------------------------------------------------------------------------
-   [OK] 可解，共 4 步
-   参考顺序：(1,3)下 -> (1,1)右 -> (3,1)上 -> (3,4)左
+   [OK] 可解，共 23 步
+   参考顺序：(0,8)上 -> (0,7)上 -> (3,8)右 -> (0,6)上 -> (0,5)上 -> (0,4)上 -> (0,3)右 -> (4,8)上 -> (1,4)右 -> (2,5)右 -> (3,7)上 -> (8,8)上 -> (0,1)右 -> (7,7)上 -> (6,3)上 -> (5,6)上 -> (10,8)上 -> (10,7)上 -> (6,2)右 -> (5,2)右 -> (8,0)上 -> (8,1)上 -> (11,0)上
 
-第  3 关  连锁反应   棋盘 7×6   箭头 10 支   密度 0.24   开局可点 2 支
-         难度 ★★★   生命值 5 颗（容错随难度递增）   本关满分 900 分
+第  3 关  连锁反应   棋盘 14×10   管道 22 支   密度 0.97   开局可点 5 支
+         难度 ★★   生命值 5 颗   本关满分 600 分
 ------------------------------------------------------------------------------
-   0 | . . . . . .
-   1 | . > > v > v
-   2 | . . . . . .
-   3 | . . . . . .
-   4 | . ^ < > ^ .
-   5 | . . . . v .
-   6 | . . . . . .
+    0 | ooooooo>o>
+    1 | voooooooo>
+    2 | oooo.ooo.^
+    3 | vooooooooo
+    4 | oooooooooo
+    5 | voooo.oooo
+    6 | ooooooo<oo
+    7 | voovo.^^o>
+    8 | ooooooooo^
+    9 | ooovoooooo
+   10 | voooooooo^
+   11 | o<ovoooooo
+   12 | ooooooooo^
+   13 | <voooooooo
 ------------------------------------------------------------------------------
-   [OK] 可解，共 10 步
-   参考顺序：(1,5)下 -> (5,4)下 -> (1,4)右 -> (4,4)上 -> (4,3)右 -> (1,3)下 -> (1,2)右 -> (1,1)右 -> (4,1)上 -> (4,2)左
+   [OK] 可解，共 22 步
+   参考顺序：(1,9)右 -> (13,1)下 -> (7,9)右 -> (0,9)右 -> (13,0)左 -> (10,0)下 -> (2,9)上 -> (0,7)右 -> (11,1)左 -> (7,0)下 -> (11,3)下 -> (5,0)下 -> (9,3)下 -> (3,0)下 -> (7,6)上 -> (7,3)下 -> (1,0)下 -> (6,7)左 -> (8,9)上 -> (7,7)上 -> (10,9)上 -> (12,9)上
 
-第  4 关  四面楚歌   棋盘 7×7   箭头 12 支   密度 0.24   开局可点 2 支
-         难度 ★★★   生命值 5 颗（容错随难度递增）   本关满分 900 分
+第  4 关  四面楚歌   棋盘 16×11   管道 27 支   密度 0.97   开局可点 5 支
+         难度 ★★★   生命值 6 颗   本关满分 900 分
 ------------------------------------------------------------------------------
-   0 | . . . . v . .
-   1 | . > > v > v .
-   2 | . . . . . . .
-   3 | . . ^ v . . .
-   4 | . . . . . . .
-   5 | . ^ < v < . .
-   6 | . . . . . . .
+    0 | oooooooo>o>
+    1 | vooooooooo>
+    2 | ooooooooo^>
+    3 | voovoooooo^
+    4 | ooooooooooo
+    5 | ooooooooooo
+    6 | vvoovooooo^
+    7 | oooooo.^ooo
+    8 | vo>voooooo^
+    9 | oooooo.oooo
+   10 | ooooooo.oo^
+   11 | ooooooooooo
+   12 | ovvoo.o.oo^
+   13 | oooo.oooo^o
+   14 | vooo<oooooo
+   15 | <ovoooooooo
 ------------------------------------------------------------------------------
-   [OK] 可解，共 12 步
-   参考顺序：(1,5)下 -> (5,3)下 -> (1,4)右 -> (3,3)下 -> (1,3)下 -> (1,2)右 -> (3,2)上 -> (1,1)右 -> (5,1)上 -> (5,2)左 -> (5,4)左 -> (0,4)下
+   [OK] 可解，共 27 步
+   参考顺序：(15,0)左 -> (0,10)右 -> (15,2)下 -> (2,10)右 -> (1,10)右 -> (3,10)上 -> (0,8)右 -> (2,9)上 -> (14,0)下 -> (6,10)上 -> (7,7)上 -> (12,1)下 -> (14,4)左 -> (12,2)下 -> (8,10)上 -> (8,3)下 -> (10,10)上 -> (6,4)下 -> (8,2)右 -> (12,10)上 -> (13,9)上 -> (8,0)下 -> (6,0)下 -> (6,1)下 -> (3,0)下 -> (3,3)下 -> (1,0)下
 
-第  5 关  错位走廊   棋盘 7×7   箭头 18 支   密度 0.37   开局可点 3 支
-         难度 ★★★★   生命值 6 颗（容错随难度递增）   本关满分 1200 分
+第  5 关  错位走廊   棋盘 18×12   管道 28 支   密度 0.97   开局可点 4 支
+         难度 ★★★   生命值 6 颗   本关满分 900 分
 ------------------------------------------------------------------------------
-   0 | > . . v . . .
-   1 | . > v > . . .
-   2 | v . . . < < v
-   3 | . > . v . . .
-   4 | > . > v . . .
-   5 | . > . . . . .
-   6 | . ^ . . . ^ <
+    0 | ooooooooooo>
+    1 | voooooooooo>
+    2 | oooooooooo^>
+    3 | vooooooooooo
+    4 | oooovooooooo
+    5 | vooooooo^oo^
+    6 | oooovooooooo
+    7 | vooooooooo^^
+    8 | oooovooooooo
+    9 | vooooooooooo
+   10 | ooooooooooo^
+   11 | voovo.oooooo
+   12 | ooooo..oooo^
+   13 | ooo<oooooooo
+   14 | vo.<ooooooo^
+   15 | oo.ooooooo^o
+   16 | v.oooooooooo
+   17 | <oo<oooooooo
 ------------------------------------------------------------------------------
-   [OK] 可解，共 18 步
-   参考顺序：(1,3)右 -> (4,3)下 -> (5,1)右 -> (3,3)下 -> (4,2)右 -> (0,3)下 -> (1,2)下 -> (3,1)右 -> (4,0)右 -> (0,0)右 -> (1,1)右 -> (2,0)下 -> (2,4)左 -> (2,5)左 -> (6,1)上 -> (6,5)上 -> (6,6)左 -> (2,6)下
+   [OK] 可解，共 28 步
+   参考顺序：(0,11)右 -> (17,0)左 -> (1,11)右 -> (2,11)右 -> (5,8)上 -> (17,3)左 -> (2,10)上 -> (16,0)下 -> (5,11)上 -> (14,0)下 -> (7,11)上 -> (7,10)上 -> (11,0)下 -> (14,3)左 -> (13,3)左 -> (10,11)上 -> (9,0)下 -> (11,3)下 -> (12,11)上 -> (7,0)下 -> (8,4)下 -> (14,11)上 -> (15,10)上 -> (5,0)下 -> (6,4)下 -> (3,0)下 -> (4,4)下 -> (1,0)下
 
-第  6 关  纵横交错   棋盘 8×8   箭头 24 支   密度 0.38   开局可点 3 支
-         难度 ★★★★   生命值 6 颗（容错随难度递增）   本关满分 1200 分
+第  6 关  纵横交错   棋盘 20×14   管道 37 支   密度 0.96   开局可点 4 支
+         难度 ★★★★   生命值 6 颗   本关满分 1200 分
 ------------------------------------------------------------------------------
-   0 | . v . > ^ . v .
-   1 | > . v . . . . .
-   2 | . . . v ^ < . <
-   3 | > . . > ^ . . .
-   4 | . > . . ^ . . .
-   5 | . . . . ^ . < .
-   6 | > . > . > . > .
-   7 | . . . < ^ . . ^
+    0 | o>o>o>o>o>o>o>
+    1 | oooooooooooo>>
+    2 | oooooooooooo.^
+    3 | ooooooooo.o.oo
+    4 | ooo.ooo>^oooo^
+    5 | oooo>ooooooooo
+    6 | oooo>ooo.^ooo^
+    7 | oooooooo^ooooo
+    8 | ooooooooooooo^
+    9 | ooooo.^.oooooo
+   10 | <oooooooo^ooo^
+   11 | <<oo.o.ooooooo
+   12 | ^.ooooooo^ooo^
+   13 | oooooooooooooo
+   14 | ^oo.oooo^^ooo^
+   15 | oooo^ooooooooo
+   16 | ^oooooooooooo^
+   17 | oooooooooooo^o
+   18 | ^ooooooooooooo
+   19 | oooooooooooooo
 ------------------------------------------------------------------------------
-   [OK] 可解，共 24 步
-   参考顺序：(0,4)上 -> (2,4)上 -> (3,4)上 -> (4,4)上 -> (5,4)上 -> (5,6)左 -> (6,6)右 -> (7,3)左 -> (0,6)下 -> (3,3)右 -> (4,1)右 -> (6,4)右 -> (7,4)上 -> (0,1)下 -> (0,3)右 -> (2,3)下 -> (2,5)左 -> (2,7)左 -> (3,0)右 -> (6,2)右 -> (7,7)上 -> (1,2)下 -> (6,0)右 -> (1,0)右
+   [OK] 可解，共 37 步
+   参考顺序：(10,0)左 -> (0,13)右 -> (1,13)右 -> (11,0)左 -> (0,11)右 -> (2,13)上 -> (1,12)右 -> (11,1)左 -> (0,9)右 -> (4,13)上 -> (6,13)上 -> (0,7)右 -> (6,9)上 -> (4,8)上 -> (8,13)上 -> (0,5)右 -> (10,9)上 -> (4,7)右 -> (7,8)上 -> (10,13)上 -> (0,3)右 -> (12,9)上 -> (5,4)右 -> (6,4)右 -> (9,6)上 -> (15,4)上 -> (0,1)右 -> (12,13)上 -> (14,9)上 -> (14,8)上 -> (14,13)上 -> (12,0)上 -> (16,13)上 -> (17,12)上 -> (14,0)上 -> (16,0)上 -> (18,0)上
 
-第  7 关  长蛇阵   棋盘 8×8   箭头 30 支   密度 0.47   开局可点 3 支
-         难度 ★★★★   生命值 6 颗（容错随难度递增）   本关满分 1200 分
+第  7 关  长蛇阵   棋盘 22×15   管道 38 支   密度 0.95   开局可点 3 支
+         难度 ★★★★   生命值 6 颗   本关满分 1200 分
 ------------------------------------------------------------------------------
-   0 | > v > . > . . .
-   1 | . v . . . . . <
-   2 | > . v > . > ^ .
-   3 | ^ . . ^ > ^ . .
-   4 | . . v < . < . <
-   5 | > v . > . . ^ .
-   6 | ^ > . . . > ^ .
-   7 | . . . . ^ . ^ <
+    0 | ooooooooooooooo
+    1 | ooooooooooooooo
+    2 | vvoooooooooooov
+    3 | oooooooooooovoo
+    4 | oooooooooooooov
+    5 | ovooovooooooooo
+    6 | voooooooooo...v
+    7 | oooo.ooooo....o
+    8 | voooovvoo.ooooo
+    9 | oooooooovoooooo
+   10 | voooo..oooooooo
+   11 | ooooooooooooooo
+   12 | voooovvoooooooo
+   13 | oooooooo<o<oo<o
+   14 | ooooov.oooooooo
+   15 | vvoooooo.oo<ooo
+   16 | ooooooooooo.ooo
+   17 | vooo.o<oooooooo
+   18 | ov..ooooooooooo
+   19 | o<oooooo<oo<ooo
+   20 | oo<oooooooooooo
+   21 | <vvoo<o<o<oo<oo
 ------------------------------------------------------------------------------
-   [OK] 可解，共 30 步
-   参考顺序：(0,4)右 -> (2,6)上 -> (4,2)下 -> (4,3)左 -> (4,5)左 -> (4,7)左 -> (5,6)上 -> (6,6)上 -> (7,6)上 -> (0,2)右 -> (2,2)下 -> (2,5)右 -> (3,5)上 -> (5,3)右 -> (6,5)右 -> (2,3)右 -> (3,3)上 -> (3,4)右 -> (6,1)右 -> (7,4)上 -> (7,7)左 -> (2,0)右 -> (5,1)下 -> (1,1)下 -> (1,7)左 -> (5,0)右 -> (0,1)下 -> (0,0)右 -> (3,0)上 -> (6,0)上
+   [OK] 可解，共 38 步
+   参考顺序：(21,1)下 -> (21,0)左 -> (21,2)下 -> (17,0)下 -> (20,2)左 -> (19,1)左 -> (15,0)下 -> (21,5)左 -> (18,1)下 -> (12,0)下 -> (21,7)左 -> (19,8)左 -> (14,5)下 -> (17,6)左 -> (15,1)下 -> (21,9)左 -> (19,11)左 -> (10,0)下 -> (15,11)左 -> (12,5)下 -> (12,6)下 -> (13,8)左 -> (21,12)左 -> (8,0)下 -> (8,5)下 -> (8,6)下 -> (9,8)下 -> (13,10)左 -> (6,0)下 -> (5,1)下 -> (5,5)下 -> (13,13)左 -> (2,0)下 -> (2,1)下 -> (6,14)下 -> (4,14)下 -> (3,12)下 -> (2,14)下
 
-第  8 关  十面埋伏   棋盘 9×9   箭头 40 支   密度 0.49   开局可点 4 支
-         难度 ★★★★★   生命值 7 颗（容错随难度递增）   本关满分 1500 分
+第  8 关  十面埋伏   棋盘 23×17   管道 43 支   密度 0.95   开局可点 3 支
+         难度 ★★★★★   生命值 7 颗   本关满分 1500 分
 ------------------------------------------------------------------------------
-   0 | v . < > . . . v .
-   1 | v > . v . . > v .
-   2 | > . . > . > ^ . ^
-   3 | . ^ . . . . v . <
-   4 | . v . < < v . v .
-   5 | > v . . ^ > v . .
-   6 | . . > . . v > v .
-   7 | . . . . ^ < . < .
-   8 | > . v . ^ > > v .
+    0 | oooooooooooo>o>o>
+    1 | voooooooo.oo>ooo^
+    2 | ooooooooooooooo.o
+    3 | ooooooooooooooooo
+    4 | ovooovoooooooooo^
+    5 | voooooooooooooooo
+    6 | oooooooo..oooooo^
+    7 | ooooovvoo.o^ooooo
+    8 | vvoooo>o..oooooo^
+    9 | oooooooo.oo^ooooo
+   10 | voooooo.ooooooo^^
+   11 | ooooooooooooooooo
+   12 | v.ooovo.ooo.ooooo
+   13 | oooooooooooooooo^
+   14 | oooooooooo^ooo^oo
+   15 | ovooov.ooooooooo^
+   16 | vooooooooooo^oooo
+   17 | oooooooo.ooooo.oo
+   18 | oooooooooo.^^o.o^
+   19 | vvoo.oooooooo.ooo
+   20 | ooo<ooooooooooooo
+   21 | vo<ooooooooooooo^
+   22 | <ovoooooooooooooo
 ------------------------------------------------------------------------------
-   [OK] 可解，共 40 步
-   参考顺序：(2,8)上 -> (5,1)下 -> (8,2)下 -> (8,7)下 -> (4,1)下 -> (4,3)左 -> (4,4)左 -> (5,4)上 -> (7,4)上 -> (7,5)左 -> (7,7)左 -> (8,4)上 -> (8,6)右 -> (6,7)下 -> (8,5)右 -> (4,7)下 -> (6,5)下 -> (6,6)右 -> (8,0)右 -> (1,7)下 -> (5,6)下 -> (6,2)右 -> (0,7)下 -> (1,6)右 -> (2,6)上 -> (3,6)下 -> (5,5)右 -> (0,3)右 -> (2,5)右 -> (4,5)下 -> (5,0)右 -> (2,3)右 -> (1,3)下 -> (2,0)右 -> (1,0)下 -> (1,1)右 -> (3,1)上 -> (3,8)左 -> (0,0)下 -> (0,2)左
+   [OK] 可解，共 43 步
+   参考顺序：(0,16)右 -> (22,0)左 -> (22,2)下 -> (0,14)右 -> (21,0)下 -> (1,16)上 -> (19,0)下 -> (4,16)上 -> (0,12)右 -> (1,12)右 -> (19,1)下 -> (21,2)左 -> (20,3)左 -> (6,16)上 -> (16,0)下 -> (15,1)下 -> (15,5)下 -> (7,11)上 -> (12,0)下 -> (8,16)上 -> (9,11)上 -> (12,5)下 -> (10,0)下 -> (10,16)上 -> (10,15)上 -> (14,10)上 -> (8,6)右 -> (8,0)下 -> (13,16)上 -> (8,1)下 -> (14,14)上 -> (7,5)下 -> (7,6)下 -> (5,0)下 -> (4,1)下 -> (15,16)上 -> (16,12)上 -> (4,5)下 -> (1,0)下 -> (18,16)上 -> (18,12)上 -> (18,11)上 -> (21,16)上
 
-第  9 关  万箭归一   棋盘 9×9   箭头 50 支   密度 0.62   开局可点 5 支
-         难度 ★★★★★   生命值 7 颗（容错随难度递增）   本关满分 1500 分
+第  9 关  万箭归一   棋盘 26×18   管道 46 支   密度 0.92   开局可点 3 支
+         难度 ★★★★★   生命值 7 颗   本关满分 1500 分
 ------------------------------------------------------------------------------
-   0 | . > . > v . > . >
-   1 | > v ^ v . > v > ^
-   2 | ^ > . > v ^ . ^ .
-   3 | > . . . > . > ^ .
-   4 | > . . > v > . > ^
-   5 | ^ > ^ > . ^ v ^ ^
-   6 | > v . . v > . > ^
-   7 | . . ^ . . . . < v
-   8 | ^ . < . . . . ^ <
+    0 | oo>o>o>o>o>o>oooo^
+    1 | oo>ooooooooooooooo
+    2 | ooooooooooo.o>ooo>
+    3 | ooooooooooo>o.^oo>
+    4 | ooooooooooooooo^.^
+    5 | ooooo.oo.ooooooooo
+    6 | ooooooooooooooooo^
+    7 | ooooo.oo>ooooooooo
+    8 | oooooo>o>^ooooooo^
+    9 | o>o>oo>ooo^ooooooo
+   10 | ooooooooo.ooooooo^
+   11 | ooooooooo..ooooooo
+   12 | oooooooo..oo^oooo^
+   13 | oooooooo.ooooooooo
+   14 | oooo..o.oooo^oooo^
+   15 | oo.....ooooooooooo
+   16 | ^o.....ooo^^ooooo^
+   17 | o......ooooo.ooooo
+   18 | oo.....oooooooooo^
+   19 | ^oo.ooooooo^ooo^oo
+   20 | ooooo^ooooooooooo^
+   21 | ^ooooooo^ooooooooo
+   22 | oo^oooooooooooo^oo
+   23 | ^oooooooooooooooo^
+   24 | oooooooooooooooooo
+   25 | oooooooooooooooooo
 ------------------------------------------------------------------------------
-   [OK] 可解，共 50 步
-   参考顺序：(0,8)右 -> (1,2)上 -> (1,8)上 -> (4,8)上 -> (5,2)上 -> (5,6)下 -> (5,8)上 -> (6,1)下 -> (6,4)下 -> (6,8)上 -> (7,2)上 -> (7,7)左 -> (0,6)右 -> (1,7)右 -> (2,7)上 -> (3,7)上 -> (4,4)下 -> (4,7)右 -> (5,7)上 -> (6,7)右 -> (8,7)上 -> (3,6)右 -> (4,5)右 -> (6,5)右 -> (1,6)下 -> (3,4)右 -> (4,3)右 -> (6,0)右 -> (1,5)右 -> (2,4)下 -> (2,5)上 -> (3,0)右 -> (4,0)右 -> (5,5)上 -> (0,4)下 -> (2,3)右 -> (5,3)右 -> (0,3)右 -> (1,3)下 -> (2,1)右 -> (5,1)右 -> (0,1)右 -> (1,1)下 -> (1,0)右 -> (2,0)上 -> (5,0)上 -> (8,0)上 -> (8,2)左 -> (8,8)左 -> (7,8)下
+   [OK] 可解，共 46 步
+   参考顺序：(3,17)右 -> (2,17)右 -> (0,17)上 -> (0,12)右 -> (4,17)上 -> (4,15)上 -> (3,14)上 -> (2,13)右 -> (0,10)右 -> (6,17)上 -> (3,11)右 -> (0,8)右 -> (7,8)右 -> (8,17)上 -> (8,9)上 -> (9,10)上 -> (0,6)右 -> (10,17)上 -> (8,8)右 -> (12,12)上 -> (0,4)右 -> (12,17)上 -> (14,12)上 -> (8,6)右 -> (9,6)右 -> (0,2)右 -> (1,2)右 -> (14,17)上 -> (16,11)上 -> (16,10)上 -> (9,3)右 -> (16,17)上 -> (19,11)上 -> (20,5)上 -> (21,8)上 -> (9,1)右 -> (18,17)上 -> (19,15)上 -> (16,0)上 -> (20,17)上 -> (22,15)上 -> (19,0)上 -> (23,17)上 -> (21,0)上 -> (22,2)上 -> (23,0)上
 
 校验结果：教学关 + 全部 9 个编号关卡均可正常通关。
-难度参考：棋盘尺寸逐关放大，第 8 关到 9×9 就封顶，
-          之后同样的格子里塞进更多箭头，靠密度继续加难；
-          开局可点的箭头越少，越要在开局仔细找出口。
+难度参考：棋盘尺寸逐关放大，第 9 关到 26×18 就封顶，
+          之后同样的格子里塞进更多管道，靠铺满率继续加难；
+          开局可点的管道越少，越要在开局仔细扫射线。
 生命值参考：按难度星级给，第 1 关 4 颗心、最后一关 7 颗心。
             关卡越难容错越高，一次手滑不至于被打回原点。
             教学关不参与计分，单独给 6 颗心，是个随便点的沙盒。
 得分参考：本关得分 = 星级×250 × 剩余生命值 ÷ 生命值上限，
-          一颗心都没丢再 +20%；第 1~9 关满分合计 9300 分。
+          一颗心都没丢再 +20%；第 1~9 关满分合计 8400 分。
 ```
 
 校验脚本的退出码为 0（全部可解）；若存在无解关卡，退出码为 1，
@@ -529,33 +855,39 @@ test_wrap_text_keeps_punctuation_off_line_start ... ok   折行后不允许有�
 
 ### 关卡一览
 
-| 关卡 | 名称 | 棋盘 | 箭头 | 密度 | 开局可点 | 生命值 | 难度 | 本关满分 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 教学关 | 教学关 | 4×5 | 3 | 0.15 | 2 | ♥×6 | 不计分 | — |
-| 1 | 初次拉弓 | 5×5 | 4 | 0.16 | 3 | ♥×4 | ★ | 300 |
-| 2 | 交叉路口 | 5×5 | 4 | 0.16 | 1 | ♥×4 | ★★ | 600 |
-| 3 | 连锁反应 | 7×6 | 10 | 0.24 | 2 | ♥×5 | ★★★ | 900 |
-| 4 | 四面楚歌 | 7×7 | 12 | 0.24 | 2 | ♥×5 | ★★★ | 900 |
-| 5 | 错位走廊 | 7×7 | 18 | 0.37 | 3 | ♥×6 | ★★★★ | 1200 |
-| 6 | 纵横交错 | 8×8 | 24 | 0.38 | 3 | ♥×6 | ★★★★ | 1200 |
-| 7 | 长蛇阵 | 8×8 | 30 | 0.47 | 3 | ♥×6 | ★★★★ | 1200 |
-| 8 | 十面埋伏 | 9×9 | 40 | 0.49 | 4 | ♥×7 | ★★★★★ | 1500 |
-| 9 | 万箭归一 | 9×9 | 50 | 0.62 | 5 | ♥×7 | ★★★★★ | 1500 |
+| 关卡 | 名称 | 棋盘 | 管道 | 占格 | 铺满率 | 开局可点 | 生命值 | 难度 | 本关满分 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 教学关 | 教学关 | 5×5 | 3 | 8 | 0.32 | 2 | ♥×6 | 不计分 | — |
+| 1 | 初次拉弓 | 11×8 | 21 | 85 | 0.97 | 7 | ♥×4 | ★ | 300 |
+| 2 | 交叉路口 | 13×9 | 23 | 116 | 0.99 | 6 | ♥×4 | ★ | 300 |
+| 3 | 连锁反应 | 14×10 | 22 | 136 | 0.97 | 5 | ♥×5 | ★★ | 600 |
+| 4 | 四面楚歌 | 16×11 | 27 | 170 | 0.97 | 5 | ♥×6 | ★★★ | 900 |
+| 5 | 错位走廊 | 18×12 | 28 | 210 | 0.97 | 4 | ♥×6 | ★★★ | 900 |
+| 6 | 纵横交错 | 20×14 | 37 | 269 | 0.96 | 4 | ♥×6 | ★★★★ | 1200 |
+| 7 | 长蛇阵 | 22×15 | 38 | 313 | 0.95 | 3 | ♥×6 | ★★★★ | 1200 |
+| 8 | 十面埋伏 | 23×17 | 43 | 372 | 0.95 | 3 | ♥×7 | ★★★★★ | 1500 |
+| 9 | 万箭归一 | 26×18 | 46 | 430 | 0.92 | 3 | ♥×7 | ★★★★★ | 1500 |
 
-9 个编号关卡合计 192 支箭头、满分合计 9300 分。
+9 个编号关卡合计 **285 支管道**、满分合计 **8400 分**。
 第 5~9 关由 `tools/generate_levels.py` **逆向构造**生成（从构造方式上就保证可解），
-生成后仍由 `verify_levels.py` 的求解器逐关复核，两道保险。
+再由 `tools/pick_levels.py` 从同一尺寸的候选里挑出「铺满率最高 + 开局可点数最接近目标」的那一版，
+最后仍由 `verify_levels.py` 的求解器逐关复核，三道保险。
 
 **难度曲线的数据**：九个关卡的难度分是
-`5.2 / 9.2 / 19.1 / 22.5 / 33.8 / 43.7 / 56.1 / 70.8 / 88.5`，
-相邻差 `4.0 / 9.9 / 3.4 / 11.3 / 9.9 / 12.4 / 14.7 / 17.7`。
-越往后加得越多：前面留足台阶让人上手，后面才开始认真。
-（中间有一版 8 关时出现过 22.3 分的大台阶，新关是插在最陡的那一处把它拆开的，
-而不是顺手追加到末尾。）
+`23.2 / 32.8 / 37.0 / 49.3 / 58.7 / 80.8 / 91.4 / 106.7 / 120.8`，
+一路单调递增（测试 `test_difficulty_and_stars_never_go_backwards` 卡着这条）。
+难度分 = `管道数 × 1.6 + 棋盘格数 × 0.12 − 开局可点数 × 3.0`，
+再按阈值 `(<35, <45, <70, <100, 其余)` 映射成 1~5 颗星。
+
+**难度轴换过一次。** 上一版棋盘尺寸冻结在 9×9、靠「密度」继续加难；
+这一版改成棋盘一直放大到 26×18，难度更多地来自**要扫的射线变多**：
+棋盘越大、管道越长（平均单支从 4 格一路涨到 9.3 格），越难一眼找出能点的那支。
+不变的判断是那条最要紧的：**开局可点数从 7 支一路收到 3 支**，
+这才是真正决定手感的那一项。
 
 ### 关于第 2 关的一次真实修复
 
-第 2 关最初的布局是：
+第 2 关最早的布局是 5×5 里四支单格箭头首尾相接：
 
 ```
 .....
@@ -567,30 +899,35 @@ test_wrap_text_keeps_punctuation_off_line_start ... ok   折行后不允许有�
 
 校验时报出 `开局可点 0 支 / 可解=False`：`(1,1)` 的 `>` 被 `(1,3)` 的 `v` 挡住，
 `v` 被 `(3,3)` 的 `<` 挡住，`<` 被 `(3,1)` 的 `^` 挡住，`^` 又被 `(1,1)` 的 `>` 挡住——
-四支箭头首尾相接形成死环。把 `<` 从 `(3,3)` 移到 `(3,4)` 之后即恢复可解，
-同时保留了「全场只有一个出口、四步连锁」的设计意图。
+四支箭头围成一个死环。把 `<` 从 `(3,3)` 移到 `(3,4)` 之后即恢复可解。
+（这一版关卡重做成弯曲管道之后，第 2 关已经换成了 13×9 的新布局，
+但「关卡不能靠眼睛验收」这条教训一直留着：
+现在 `validate_layout` 在导入关卡时就拦非法形状，`verify_levels.py` 与单元测试再各解一遍。）
 
 ### 另一件值得记的事：手写的关号会过期
 
 校验脚本的报告里原本有一句「棋盘尺寸到第 7 关就封顶在 9×9」，
 后来插了一关，实际已经变成第 8 关，但这句写死的描述**照样打印、退出码照样是 0**，
-不报错也不警告。已经改成从关卡表里现算（`sizes.index(max(side)) + 1`）。
-教训是：能现算的数字一律不要手写，否则过期之后只会静静地印一句错话。
+不报错也不警告。已经改成从关卡表里现算。教训是：能现算的数字一律不要手写，
+否则过期之后只会静静地印一句错话。
 
 ---
 
 ## 八、手动试玩验证
 
-> 这一节的结论需要在**本人实际试玩后确认**；如果手感和这里写的不一致，以真实感受为准改掉。
+> **这一节的结论需要由本人实际试玩后确认**；如果手感和这里写的不一致，以真实感受为准改掉。
+> 自动化测试只能证明「逻辑上可解」，不能证明「玩起来是对的」。
+> 九关的参考通关顺序见上面第七节，卡关时可以对照着看。
 
-| 关卡 | 试玩结论 |
+| 关卡 | 待确认的试玩要点 |
 | --- | --- |
-| 教学关 | 3 支箭头配 6 颗心，跟着屏幕高亮一步步点即可；第一步故意让玩家点一支被挡住的箭头，用来体验碰撞反馈和掉心 |
-| 第 1 关 初次拉弓 | 4 支箭头里有 3 支能直接飞，点两下就通关，适合建立信心 |
-| 第 2 关 交叉路口 | 开局只有一支能飞，要顺着链条一支一支解；点错立刻掉一颗心，4 颗心的容错够用 |
-| 第 3 关 连锁反应 | 先点掉能飞的那一支，同行的箭头会依次飞出去，连锁反馈明显 |
-| 第 4 关 四面楚歌 | 开局只有 2 支能飞；棋盘来到 7×7，横竖都要扫一遍 |
-| 第 5~7 关 | 棋盘 7×7 → 8×8，箭头 18 / 24 / 30 支，开局可点 3 支；密度上去之后扫视量明显变大 |
-| 第 8~9 关 | 9×9 塞了 40 / 50 支箭头，只有 4~5 支能先飞；心给了 7 颗，容错够但也得认真找 |
-| 通用 | 「重新开始」后布局与生命值正确复位；`R` 重开、`Esc` 返回主菜单均正常 |
+| 教学关 | 3 支管道配 6 颗心，跟着黄色高亮环一步步点即可；第一步是**故意**让玩家点一支被挡住的管道，用来体验撞击反馈和掉心 |
+| 第 1 关 初次拉弓 | 11×8 / 21 支，开局有 7 支能直接飞，适合建立信心 |
+| 第 2 关 交叉路口 | 13×9 / 23 支，开局只剩 6 支能点，盘面铺满率 0.99，要顺着射线一支一支解 |
+| 第 3 关 连锁反应 | 管道开始变长（均 6.2 格），先点能走的那几支，连锁反馈是否明显 |
+| 第 4 关 四面楚歌 | 16×11 / 27 支，均长 6.3 格，横竖都要扫一遍 |
+| 第 5~7 关 | 18×12 → 22×15，管道 28 / 37 / 38 支，开局可点 4 → 4 → 3；扫视量明显变大，缩放滑杆好不好用 |
+| 第 8~9 关 | 23×17 / 26×18，管道 43 / 46 支，均长 8.7 / 9.3 格，开局只剩 3 支能先飞；心给了 7 颗 |
+| 通用 | 「重新开始本关」后布局与生命值正确复位；`R` 重开、`H` 提示、`G` 辅助线、`+` / `-` 缩放都正常；放大后拖动棋盘顺不顺手 |
 | 进度 | 关掉游戏再打开，已解锁到哪一关、每关最高分都会被记住；「清空进度」需连点两次 |
+| 双主题 | 顶栏月亮开关切到日间，棋盘上的管道与文字是否都还看得清 |
