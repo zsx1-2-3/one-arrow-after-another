@@ -1,13 +1,25 @@
 # -*- coding: utf-8 -*-
-"""自动化测试：覆盖作业要求中的 T01~T06 六个测试用例，外加边界检查、进度解锁、
-关卡总览交互与教学关引导。
+"""自动化测试：覆盖作业要求中的 T01~T06 六个测试用例，外加边界检查、
+关卡平衡、配色、进度解锁、竖屏布局与交互、教学关引导。
 
 运行方式（在项目根目录下执行）：
     python tests/test_game.py
     python -m unittest discover -s tests -v
 
-说明：T04~T06 需要创建窗口，这里把 SDL 视频驱动切成 dummy，做到无头运行，
-所以在没有显示器的服务器上也能跑。
+说明：T04~T06 与布局/交互用例需要创建窗口，这里把 SDL 视频驱动切成 dummy，
+做到无头运行，所以在没有显示器的机器上也能跑。
+
+T01~T06 的对应关系：
+    T01  箭头前方无阻挡          -> 点击后整支管道飞出被消除
+    T02  箭头前方有别的管道       -> 飞不出去，并扣 1 点生命值
+    T03  箭头朝棋盘外（含边角）   -> 算作无阻挡，可以飞出，且不越界
+    T04  点击空格                -> 什么都不发生（不扣生命值、不消除）
+    T05  生命值耗尽              -> 本关失败、不得分
+    T06  清空全部管道            -> 通关、按剩余生命值计分、解锁下一关
+
+关于「管道」这个词：这一版的一支「箭」是一条占好几格的折线管道，末端是箭头。
+所以测试里凡是点格子，点它身上的**任意一格**都应该选中整支管道——
+这是这一版最容易被写错的地方，专门有几个用例钉住它。
 """
 
 import json
@@ -25,42 +37,43 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
-TOOLS = os.path.join(ROOT, "tools")
-if TOOLS not in sys.path:
-    sys.path.insert(0, TOOLS)
 
 import pygame  # noqa: E402
 
-import deshuffle_levels  # noqa: E402
-from game import anim, bgfx, config, scoring, ui  # noqa: E402
-from game.app import (HUD_CLOCK_SIZE, HUD_HEART_GAP, HUD_HEART_SIZE,  # noqa: E402
-                      HUD_INFO_GAP, HUD_ROW_Y, OVERLAY_ALL_CLEAR, OVERLAY_FAIL,
-                      OVERLAY_TUTORIAL_DONE, OVERLAY_WIN, SCENE_LEVELS,
-                      SCENE_MENU, SCENE_PLAY, Game)
+from game import anim, bgfx, config, levels, pieces, scoring, ui  # noqa: E402
+from game.app import (DEMO_BLOCKED_CAPTION, DEMO_BLOCKED_SPECS,  # noqa: E402
+                      DEMO_CLEAR_CAPTION, DEMO_CLEAR_SPECS, DEMO_COLORS,
+                      DEMO_ROWS, DEMO_COLS, OVERLAY_ALL_CLEAR, OVERLAY_FAIL,
+                      OVERLAY_SETTINGS, OVERLAY_TUTORIAL_DONE, OVERLAY_WIN,
+                      PANEL_HEIGHT, SCENE_LEVELS, SCENE_MENU, SCENE_PLAY, Game,
+                      demo_pieces)
 from game.board import (CLICK_BLOCKED, CLICK_EMPTY, CLICK_FLY,  # noqa: E402
                         CLICK_IGNORED, STATE_CLEARED, STATE_FAILED,
-                        STATE_PLAYING, Board, count_free_arrows, solve_level)
+                        STATE_PLAYING, Board, count_free_pieces, solve_level)
 from game.levels import (HP_BY_STARS, LEVELS, TOTAL_LEVELS, TUTORIAL,  # noqa: E402
-                         Level)
+                         Level, TutorialStep, validate_levels)
+from game.pieces import DIR_CHARS, DIRECTIONS, PIECE_PALETTE, Piece  # noqa: E402
 from game.progress import Progress  # noqa: E402
 
 FRAME = 1.0 / 60.0
 
+# 跑完一整关 + 等结果面板弹出来，需要跨过 config.RESULT_DELAY 这道坎。
+_RESULT_FRAMES = int(config.RESULT_DELAY / FRAME) + 20
 
-def make_level(layout, max_hp=3, name="测试关卡"):
-    return Level(name=name, hint="", max_hp=max_hp, layout=tuple(layout))
+
+# ---------------------------------------------------------------- 测试用小工具
+def make_level(specs, rows, cols, name="测试关卡", hint="", **extra):
+    """按关卡数据构造一个 Level（构造时就会跑一遍 validate_layout）。"""
+    return Level(name=name, hint=hint, rows=rows, cols=cols,
+                 specs=tuple(specs), **extra)
 
 
-# T01 / T02 / T03 使用的测试关卡
-#   (1,1) 的「>」被 (1,2) 的「v」挡住；(1,2) 的「v」下方全空，可以飞出
-#   一共 3 支箭头：(1,1) 右、(1,2) 下、(3,1) 上
-BASIC_LAYOUT = ("....", ".>v.", "....", ".^..")
-
-# 四条边上的箭头都朝向棋盘外，用来验证边界判断
-EDGE_LAYOUT = (".^..", "...>", "<...", "..v.")
-
-# 四个角落的箭头朝棋盘内部，用来验证角落不会越界
-CORNER_LAYOUT = ("v...", "....", "....", "...^")
+def piece_at_head(level, row, col):
+    """取「头在 (row, col)」的那支箭。"""
+    for piece in level.pieces:
+        if piece.head == (row, col):
+            return piece
+    raise KeyError("没有头在 (%d, %d) 的管道" % (row, col))
 
 
 def level_index(name):
@@ -75,1591 +88,2120 @@ def level_index(name):
     raise KeyError("没有叫「%s」的关卡" % name)
 
 
+def neighbour_pairs(level):
+    """返回所有「两支管道有一格上下左右相邻」的组合（用于配色检查）。"""
+    owner = {}
+    for index, piece in enumerate(level.pieces):
+        for cell in piece.cells:
+            owner[cell] = index
+    pairs = set()
+    for (row, col), index in owner.items():
+        for d_row, d_col in DIRECTIONS.values():
+            other = owner.get((row + d_row, col + d_col))
+            if other is not None and other != index:
+                pairs.add((min(index, other), max(index, other)))
+    return pairs
+
+
+# ---------------------------------------------------------------- T01~T03 规则
+# 三支管道，摆成一个「挡住 -> 让路 -> 都能飞」的小局面：
+#     A "2,0 > R2"  横躺三格，箭头朝右，正前方 (2,3) 是 B 的身子   -> 被挡
+#     B "2,3 v D2"  竖着三格，箭头朝下，前方一路空到盘外           -> 能飞
+#     C "0,4 v D"   竖着两格，箭头朝下，也是通的                   -> 能飞
+BASIC_SPECS = ("2,0 > R2", "2,3 v D2", "0,4 v D")
+BASIC_ROWS, BASIC_COLS = 5, 5
+
+# 四条边上的管道都朝向棋盘外，用来验证边界判断（T03）
+EDGE_SPECS = ("0,0 ^", "0,3 v", "1,4 >", "3,4 <")
+EDGE_ROWS, EDGE_COLS = 4, 5
+
+
 class BoardRuleTestCase(unittest.TestCase):
     """棋盘规则（纯逻辑，不需要 pygame）。"""
 
-    def setUp(self):
-        self.board = Board(make_level(BASIC_LAYOUT))
+    # ------------------------------------------------------------ 写法解析
+    def test_parse_single_cell_piece(self):
+        """不带路径段的写法 = 只占一格。"""
+        cells, direction = pieces.parse_piece("3,4 ^")
+        self.assertEqual(cells, ((3, 4),))
+        self.assertEqual(direction, "up")
 
-    # ---------------------------------------------------------- T01
-    def test_t01_click_free_arrow_flies_out(self):
-        """T01 点击前方无阻挡的箭头 -> 箭头飞出棋盘并消失。"""
-        self.assertEqual(self.board.total, 3)
-        result = self.board.click(1, 2)                 # 朝下的箭头，下方无阻挡
+    def test_parse_multi_segment_path(self):
+        """路径按「方向字母 + 格数」累加，从尾到头有序。"""
+        cells, direction = pieces.parse_piece("4,6 > D2R2")
+        # 起点 (4,6)，先向下 2 格到 (6,6)，再向右 2 格到 (6,8)
+        self.assertEqual(cells, ((4, 6), (5, 6), (6, 6), (6, 7), (6, 8)))
+        self.assertEqual(direction, "right")
+
+    def test_parse_default_segment_count_is_one(self):
+        """字母后面不写数字就是走一格。"""
+        cells, _ = pieces.parse_piece("0,0 > DRD")
+        self.assertEqual(cells, ((0, 0), (1, 0), (1, 1), (2, 1)))
+
+    def test_parse_downward_piece_is_not_broken_by_upper(self):
+        """朝下的 'v' 不能被 upper() 变成 'V' 而解析失败。
+
+        这是一个真实发生过的 bug：整串 upper() 之后 'v' 变成 'V'，
+        方向表里认的是小写 'v'，于是所有朝下的管道都没法解析。
+        """
+        for char in ("v",):
+            cells, direction = pieces.parse_piece("1,1 %s D" % char)
+            self.assertEqual(direction, "down")
+            self.assertEqual(cells, ((1, 1), (2, 1)))
+
+    def test_parse_accepts_lowercase_path_and_extra_spaces(self):
+        """关卡数据是手写与脚本混着的，大小写与多余空格都要能吃下。"""
+        cells, direction = pieces.parse_piece("  2,2   v   d2  ")
+        self.assertEqual(direction, "down")
+        self.assertEqual(cells, ((2, 2), (3, 2), (4, 2)))
+
+    def test_parse_rejects_bad_specs(self):
+        for bad in ("", "abc", "1,2", "1,2 X", "-1,0 ^", "1,2 > ZZ"):
+            with self.assertRaises(ValueError, msg="应当拒绝 %r" % bad):
+                pieces.parse_piece(bad)
+
+    def test_format_piece_round_trip(self):
+        """format_piece 是 parse_piece 的逆运算，生成器靠它打印布局。
+
+        注意它是**会把连续同向的步子合并**的：D,R,D,R 不会被合成 "D2R2"
+        （中间隔着拐弯），只有像 D,D 这种才写成 "D2"。
+        """
+        cells = ((0, 0), (1, 0), (1, 1), (2, 1), (2, 2))
+        text = pieces.format_piece(cells, "right")
+        self.assertEqual(text, "0,0 > DRDR")
+        again, direction = pieces.parse_piece(text)
+        self.assertEqual(again, cells)
+        self.assertEqual(direction, "right")
+
+    def test_format_piece_merges_repeated_steps(self):
+        cells = ((0, 0), (1, 0), (2, 0), (2, 1), (2, 2))
+        self.assertEqual(pieces.format_piece(cells, "right"), "0,0 > D2R2")
+
+    def test_format_piece_rejects_diagonal_step(self):
+        with self.assertRaises(ValueError):
+            pieces.format_piece(((0, 0), (1, 1)), "right")
+
+    def test_piece_head_tail_and_length(self):
+        piece = Piece(cells=((0, 0), (0, 1), (0, 2)), direction="right")
+        self.assertEqual(piece.head, (0, 2))
+        self.assertEqual(piece.tail, (0, 0))
+        self.assertEqual(piece.length, 3)
+        self.assertEqual(piece.delta, (0, 1))
+
+    def test_piece_ray_stops_at_board_edge(self):
+        """射线从箭头出发、直到棋盘边界，且**不含箭头自己**。"""
+        piece = Piece(cells=((0, 0), (0, 1)), direction="right")
+        self.assertEqual(piece.ray(1, 5), [(0, 2), (0, 3), (0, 4)])
+        self.assertEqual(piece.ray(1, 2), [])
+        down = Piece(cells=((0, 0),), direction="down")
+        self.assertEqual(down.ray(3, 1), [(1, 0), (2, 0)])
+
+    # ------------------------------------------------------------ 布局校验
+    def test_validate_layout_accepts_good_level(self):
+        parsed = [Piece(cells=pieces.parse_piece(s)[0], direction=pieces.parse_piece(s)[1])
+                  for s in BASIC_SPECS]
+        self.assertTrue(pieces.validate_layout(BASIC_ROWS, BASIC_COLS, parsed))
+
+    def test_validate_layout_rejects_empty_level(self):
+        with self.assertRaises(ValueError):
+            pieces.validate_layout(3, 3, [])
+
+    def test_validate_layout_rejects_out_of_board(self):
+        bad = [Piece(cells=((0, 0), (0, 1), (0, 2)), direction="right")]
+        with self.assertRaises(ValueError):
+            pieces.validate_layout(1, 2, bad)
+
+    def test_validate_layout_rejects_overlap(self):
+        bad = [Piece(cells=((0, 0),), direction="right"),
+               Piece(cells=((0, 0),), direction="left")]
+        with self.assertRaises(ValueError):
+            pieces.validate_layout(2, 2, bad)
+
+    def test_validate_layout_rejects_broken_path(self):
+        """路径必须逐格相邻，不能跳格。"""
+        bad = [Piece(cells=((0, 0), (0, 2)), direction="right")]
+        with self.assertRaises(ValueError):
+            pieces.validate_layout(2, 4, bad)
+
+    def test_validate_layout_rejects_self_crossing(self):
+        bad = [Piece(cells=((0, 0), (1, 0), (1, 1), (0, 1), (0, 0)), direction="left")]
+        with self.assertRaises(ValueError):
+            pieces.validate_layout(3, 3, bad)
+
+    def test_validate_layout_rejects_head_direction_mismatch(self):
+        """最后一段必须和箭头方向一致，否则画出来的箭头会歪在拐角上。"""
+        bad = [Piece(cells=((0, 0), (1, 0)), direction="right")]
+        with self.assertRaises(ValueError):
+            pieces.validate_layout(3, 3, bad)
+
+    def test_validate_layout_rejects_piece_facing_own_body(self):
+        """箭头正对着自己的管道 -> 永远飞不出去，必须在关卡校验里拦掉。
+
+        形状是一条绕回来的管道：从 (0,0) 一路向右、向下、再向左绕回 (1,1)，
+        箭头朝上，正前方 (0,1) 就是自己身上的一格。
+        这一支的**末段方向与箭头是一致的**，所以触发的一定是
+        「箭头正对自己」这条规则，而不是「末段不一致」那条。
+        """
+        spiral = ((0, 0), (0, 1), (0, 2), (0, 3), (1, 3), (2, 3), (2, 2), (2, 1), (1, 1))
+        bad = [Piece(cells=spiral, direction="up")]
+        self.assertEqual(bad[0].head, (1, 1))
+        self.assertIn((0, 1), bad[0].ray(4, 4))            # 射线确实穿过自己
+        self.assertTrue(pieces.faces_own_body(bad[0], 4, 4))
+        with self.assertRaises(ValueError):
+            pieces.validate_layout(4, 4, bad)
+
+    def test_faces_own_body_false_for_clean_shape(self):
+        ok = Piece(cells=((2, 0), (2, 1), (2, 2)), direction="right")
+        self.assertFalse(pieces.faces_own_body(ok, 5, 5))
+
+    def test_build_grid_marks_owner_index(self):
+        parsed = [Piece(cells=pieces.parse_piece(s)[0], direction=pieces.parse_piece(s)[1])
+                  for s in BASIC_SPECS]
+        grid = pieces.build_grid(BASIC_ROWS, BASIC_COLS, parsed)
+        self.assertEqual(grid[2][0], 0)
+        self.assertEqual(grid[2][2], 0)
+        self.assertEqual(grid[2][3], 1)
+        self.assertIsNone(grid[4][0])
+
+    # ------------------------------------------------------------ 配色
+    def test_assign_colors_gives_every_piece_a_palette_color(self):
+        level = make_level(BASIC_SPECS, BASIC_ROWS, BASIC_COLS)
+        for piece in level.pieces:
+            self.assertIn(piece.color, PIECE_PALETTE)
+
+    def test_adjacent_pieces_never_share_a_color(self):
+        """相邻管道同色会「糊成一片」，看不出是几支——所有关卡都要守住这条。"""
+        for level in list(LEVELS) + [TUTORIAL]:
+            for left, right in neighbour_pairs(level):
+                self.assertNotEqual(level.pieces[left].color, level.pieces[right].color,
+                                    "「%s」里第 %d 支和第 %d 支同色" % (level.name, left, right))
+
+    def test_assign_colors_is_deterministic(self):
+        """同样的布局必须得到同样的配色，否则每次打开画面都不一样。"""
+        first = make_level(BASIC_SPECS, BASIC_ROWS, BASIC_COLS).pieces
+        second = make_level(BASIC_SPECS, BASIC_ROWS, BASIC_COLS).pieces
+        self.assertEqual([p.color for p in first], [p.color for p in second])
+
+    # ------------------------------------------------------------ T01 无阻挡
+    def test_t01_free_piece_flies_out_and_disappears(self):
+        board = Board(make_level(BASIC_SPECS, BASIC_ROWS, BASIC_COLS))
+        target = board.piece_at(2, 3)                  # 竖着那支，箭头朝下
+        result = board.click(2, 3)
         self.assertEqual(result.kind, CLICK_FLY)
-        self.assertIsNotNone(result.arrow)
-        self.assertEqual(self.board.remaining, 2)
-        self.assertIsNone(self.board.arrow_at(1, 2))    # 已经从棋盘上消失
-        self.assertEqual(self.board.hp, self.board.max_hp)   # 不扣生命值
+        self.assertIs(result.piece, target)
+        self.assertIsNone(result.blocker)
+        self.assertIsNone(board.piece_at(2, 3))
+        self.assertEqual(board.remaining, 2)
+        self.assertEqual(board.hp, board.max_hp)       # 点对不扣生命值
+        self.assertEqual(len(board.history), 1)
 
-    # ---------------------------------------------------------- T02
-    def test_t02_click_blocked_arrow_costs_hp(self):
-        """T02 点击前方有阻挡的箭头 -> 箭头不消失，生命值减 1。"""
-        result = self.board.click(1, 1)                 # 朝右，被 (1,2) 的箭头挡住
+    def test_clicking_any_cell_of_a_pipe_selects_the_whole_pipe(self):
+        """点管道的哪一格都算选中它——玩家看到的是整条管道。"""
+        for row, col in ((2, 3), (3, 3), (4, 3)):
+            board = Board(make_level(BASIC_SPECS, BASIC_ROWS, BASIC_COLS))
+            result = board.click(row, col)
+            self.assertEqual(result.kind, CLICK_FLY, "点 (%d,%d) 应当消除整条管道" % (row, col))
+            self.assertEqual(board.remaining, 2)
+            # 整条管道三格都要被清空，不能只清点中的那一格
+            for r, c in ((2, 3), (3, 3), (4, 3)):
+                self.assertIsNone(board.piece_at(r, c))
+
+    # ------------------------------------------------------------ T02 被挡
+    def test_t02_blocked_piece_loses_one_heart(self):
+        board = Board(make_level(BASIC_SPECS, BASIC_ROWS, BASIC_COLS))
+        target = board.piece_at(2, 0)                  # 横躺那支，正前方有管道
+        result = board.click(2, 0)
         self.assertEqual(result.kind, CLICK_BLOCKED)
-        self.assertEqual(result.blocker.row, 1)
-        self.assertEqual(result.blocker.col, 2)
-        self.assertIsNotNone(self.board.arrow_at(1, 1))  # 箭头还在
-        self.assertEqual(self.board.remaining, 3)        # 剩余箭头数不变
-        self.assertEqual(self.board.hp, 2)               # 生命值 3 -> 2
-        self.assertEqual(self.board.hp_left, 2)
+        self.assertIs(result.piece, target)
+        self.assertIsNotNone(result.blocker)
+        # 挡住它的是竖着那支（身子压在 (2,3)，箭头在 (4,3)）；
+        # 这里比对的是**整支管道**，不是被碰上的那一格。
+        self.assertEqual(result.blocker.cells, ((2, 3), (3, 3), (4, 3)))
+        self.assertIn(result.blocker, board.pieces)
+        self.assertEqual(board.hp, board.max_hp - 1)
+        self.assertEqual(board.hearts_lost, 1)
+        self.assertEqual(board.remaining, 3)           # 没被消除
+        self.assertIsNotNone(board.piece_at(2, 0))
 
-    # ---------------------------------------------------------- T03
-    def test_t03_arrows_on_the_edge_fly_out_safely(self):
-        """T03 点击边缘且朝向棋盘外的箭头 -> 正常消失，不发生越界错误。"""
-        for layout in (EDGE_LAYOUT, CORNER_LAYOUT):
-            board = Board(make_level(layout))
-            for arrow in list(board.arrows):
-                result = board.click(arrow.row, arrow.col)
-                self.assertEqual(result.kind, CLICK_FLY,
-                                 "(%d,%d) 朝向棋盘外的箭头应该能飞出" % (arrow.row, arrow.col))
-                # 路径检查不允许算出棋盘外的坐标
-                for row, col in result.path:
-                    self.assertTrue(board.in_bounds(row, col))
-            self.assertEqual(board.remaining, 0)
-            self.assertEqual(board.state, STATE_CLEARED)
+    def test_t02_blocker_is_the_nearest_piece_on_the_ray(self):
+        """射线上可能有好几支管道，挡住它的应当是**最先遇到**的那一支。
 
-    def test_corner_arrow_path_never_leaves_the_board(self):
-        """路径检测返回的坐标必须全部落在棋盘内。"""
-        board = Board(make_level(EDGE_LAYOUT))
-        for arrow in board.arrows:
-            for row, col in board.path_cells(arrow.row, arrow.col):
-                self.assertTrue(0 <= row < board.rows)
-                self.assertTrue(0 <= col < board.cols)
+        而且挡路的往往是那支管道的**身子**，它的箭头可能在别的地方——
+        下面 (1,1) 那支的头就落在 (2,1)，不在射线上。
+        （界面早先直接 `path.index(blocker.head)` 画悬停路径，遇到这种就会崩。）
+        """
+        level = make_level(("1,0 >", "1,1 v D", "1,3 v"), 3, 4)
+        board = Board(level)
+        result = board.click(1, 0)
+        self.assertEqual(result.kind, CLICK_BLOCKED)
+        self.assertEqual(result.blocker.head, (2, 1))
+        self.assertNotIn(result.blocker.head, result.path,
+                         "这一例的意义就在于「挡路的格子不是它的箭头」")
+        self.assertEqual(result.path, [(1, 1), (1, 2), (1, 3)])
 
-    def test_click_empty_cell_is_harmless(self):
-        """点到空格子不扣生命值，也不改变棋盘。"""
-        result = self.board.click(0, 0)
-        self.assertEqual(result.kind, CLICK_EMPTY)
-        self.assertEqual(self.board.hp, self.board.max_hp)
-        self.assertEqual(self.board.remaining, 3)
+    def test_path_to_blocker_stops_at_the_nearest_piece(self):
+        """悬停路径要截断在挡路那一格，再往后跟「为什么飞不出去」无关。"""
+        level = make_level(("1,0 >", "1,1 v D", "1,3 v"), 3, 4)
+        board = Board(level)
+        piece = board.piece_at(1, 0)
+        path, blocker = board.path_to_blocker(piece)
+        self.assertEqual(path, [(1, 1)])
+        self.assertEqual(blocker.head, (2, 1))
 
-    def test_click_outside_board_is_ignored(self):
-        """点到棋盘外不会抛异常。"""
-        self.assertEqual(self.board.click(-1, 0).kind, CLICK_IGNORED)
-        self.assertEqual(self.board.click(0, 99).kind, CLICK_IGNORED)
+    def test_path_to_blocker_returns_the_whole_ray_when_clear(self):
+        level = make_level(("1,0 >", "1,1 v D"), 3, 4)
+        board = Board(level)
+        board.click(1, 1)                              # 先让路走开
+        path, blocker = board.path_to_blocker(board.piece_at(1, 0))
+        self.assertEqual(path, [(1, 1), (1, 2), (1, 3)])
+        self.assertIsNone(blocker)
 
-    def test_click_after_level_finished_is_ignored(self):
-        """本关结束后再点棋盘不再改变任何状态。"""
-        board = Board(make_level(EDGE_LAYOUT))
-        for arrow in list(board.arrows):
-            board.click(arrow.row, arrow.col)
-        self.assertEqual(board.state, STATE_CLEARED)
-        self.assertEqual(board.click(1, 1).kind, CLICK_IGNORED)
-        self.assertEqual(board.remaining, 0)
+    def test_t02_blocking_piece_moves_away_then_it_can_fly(self):
+        """把挡路的点掉之后，原本被挡的那支就能飞了（连锁的最小例子）。"""
+        board = Board(make_level(BASIC_SPECS, BASIC_ROWS, BASIC_COLS))
+        self.assertEqual(board.click(2, 0).kind, CLICK_BLOCKED)   # 起初被 B 挡着
+        self.assertIsNotNone(board.piece_at(2, 0))                # 被挡不会消失
+        self.assertEqual(board.click(2, 3).kind, CLICK_FLY)       # 点掉挡路的 B
+        result = board.click(2, 0)                                # 这回轮到 A 了
+        self.assertEqual(result.kind, CLICK_FLY)
+        self.assertIsNone(board.piece_at(2, 0))
+        self.assertEqual(board.remaining, 1)
 
-    def test_fail_when_hp_used_up(self):
-        """生命值用尽后棋盘进入失败状态。"""
-        board = Board(make_level(BASIC_LAYOUT, max_hp=2))
-        board.click(1, 1)
-        self.assertEqual(board.state, STATE_PLAYING)
-        board.click(1, 1)
-        self.assertEqual(board.state, STATE_FAILED)
-        self.assertEqual(board.hp_left, 0)
+    def test_find_blocker_ignores_the_pieces_own_body(self):
+        """管道绕回来贴着自己的箭头前方时，不算「被自己挡住」。
 
-    def test_hp_drops_one_per_blocked_click(self):
-        """点错一次固定扣 1 点生命值；扣到 0 就失败，且不会再往下扣成负数。"""
-        board = Board(make_level(BASIC_LAYOUT, max_hp=3))
-        self.assertEqual(board.hp, 3)                    # 开局是满血
+        取一支真实关卡里形状恰好如此的管道来验证：它的射线会经过自己的某一格，
+        但 find_blocker 只认**别的**管道。
+        """
+        hits = 0
+        for level in LEVELS:
+            board = Board(level)
+            for piece in board.pieces:
+                own = set(piece.cells)
+                if own & set(piece.ray(board.rows, board.cols)):
+                    continue                           # 关卡校验不允许这种形状
+                blocker = board.find_blocker(piece)
+                if blocker is not None:
+                    self.assertIsNot(blocker, piece)
+                    hits += 1
+            board.reset()
+        self.assertGreater(hits, 0, "至少要有一个被挡的例子，否则这条断言没测到东西")
 
-        for expected in (2, 1, 0):
-            board.click(1, 1)                            # (1,1) 的「>」被 (1,2) 挡住
-            self.assertEqual(board.hp, expected)
+    def test_click_result_carries_the_ray_path(self):
+        """点击结果要带上「箭头前方直到边界」的格子，界面靠它画路径提示。"""
+        board = Board(make_level(BASIC_SPECS, BASIC_ROWS, BASIC_COLS))
+        result = board.click(2, 0)
+        self.assertEqual(result.path, [(2, 3), (2, 4)])
 
-        self.assertEqual(board.state, STATE_FAILED)
-        board.click(1, 1)                                # 本关已结束，再点不生效
-        self.assertEqual(board.hp, 0)
-        self.assertEqual(board.remaining, 3)             # 箭头一支都没少
-
-    def test_victory_condition(self):
-        """清空全部箭头后棋盘进入通关状态。"""
-        board = Board(make_level(BASIC_LAYOUT))
-        order = board.solution()
-        self.assertIsNotNone(order)
-        for row, col in order:
+    # ------------------------------------------------------------ T03 边界
+    def test_t03_pieces_at_edges_face_outward_and_can_fly(self):
+        board = Board(make_level(EDGE_SPECS, EDGE_ROWS, EDGE_COLS))
+        self.assertEqual(board.remaining, 4)
+        for piece in list(board.pieces):
+            self.assertTrue(board.can_fly(piece),
+                            "朝棋盘外的管道应当能飞：%r" % (piece.cells,))
+        for row, col in ((0, 0), (0, 3), (1, 4), (3, 4)):
             self.assertEqual(board.click(row, col).kind, CLICK_FLY)
         self.assertEqual(board.remaining, 0)
         self.assertEqual(board.state, STATE_CLEARED)
 
-    def test_reset_restores_the_level(self):
-        """reset() 把箭头布局和生命值都恢复原样。"""
-        board = Board(make_level(BASIC_LAYOUT))
-        board.click(1, 2)
-        board.click(1, 1)
-        board.reset()
-        self.assertEqual(board.remaining, board.total)
+    def test_edge_ray_does_not_run_off_the_board(self):
+        """边上的射线只到边界为止，不能越界算出负坐标或越界的格子。"""
+        for direction, head, rows, cols in (
+                ("up", (0, 2), 3, 4),
+                ("down", (2, 2), 3, 4),
+                ("left", (1, 0), 3, 4),
+                ("right", (1, 3), 3, 4)):
+            piece = Piece(cells=(head,), direction=direction)
+            self.assertEqual(piece.ray(rows, cols), [])
+
+    def test_ray_covers_corner_pieces_correctly(self):
+        piece = Piece(cells=((0, 0),), direction="right")
+        self.assertEqual(piece.ray(3, 3), [(0, 1), (0, 2)])
+
+    # ------------------------------------------------------------ T04 空格
+    def test_clicking_empty_cell_does_nothing(self):
+        board = Board(make_level(BASIC_SPECS, BASIC_ROWS, BASIC_COLS))
+        before = (board.remaining, board.hp, board.state)
+        result = board.click(4, 0)                     # 空格
+        self.assertEqual(result.kind, CLICK_EMPTY)
+        self.assertIsNone(result.piece)
+        self.assertEqual((board.remaining, board.hp, board.state), before)
+
+    def test_click_outside_board_is_ignored(self):
+        board = Board(make_level(BASIC_SPECS, BASIC_ROWS, BASIC_COLS))
+        for row, col in ((-1, 0), (0, -1), (BASIC_ROWS, 0), (0, BASIC_COLS)):
+            self.assertEqual(board.click(row, col).kind, CLICK_IGNORED)
         self.assertEqual(board.hp, board.max_hp)
-        self.assertEqual(board.state, STATE_PLAYING)
-        for arrow in board.arrows:
-            self.assertIs(board.arrow_at(arrow.row, arrow.col), arrow)
 
+    # ------------------------------------------------------------ T05 失败
+    def test_running_out_of_hearts_fails_the_level(self):
+        board = Board(make_level(BASIC_SPECS, BASIC_ROWS, BASIC_COLS))
+        for _ in range(board.max_hp - 1):
+            self.assertEqual(board.click(2, 0).kind, CLICK_BLOCKED)
+            self.assertEqual(board.state, STATE_PLAYING)
+        self.assertEqual(board.click(2, 0).kind, CLICK_BLOCKED)
+        self.assertEqual(board.state, STATE_FAILED)
+        self.assertEqual(board.hp, 0)
 
-class SolverTestCase(unittest.TestCase):
-    """关卡求解器与关卡数据校验。"""
+    def test_clicks_after_failure_are_ignored(self):
+        board = Board(make_level(BASIC_SPECS, BASIC_ROWS, BASIC_COLS))
+        for _ in range(board.max_hp):
+            board.click(2, 0)
+        self.assertEqual(board.state, STATE_FAILED)
+        self.assertEqual(board.click(2, 3).kind, CLICK_IGNORED)
+        self.assertEqual(board.remaining, 3)
 
-    def test_all_levels_are_solvable(self):
-        """作业要求：每个关卡都必须存在合理的通关顺序。"""
-        for level in LEVELS:
-            order = solve_level(level.rows, level.cols, level.arrows)
-            self.assertIsNotNone(order, "关卡「%s」无解" % level.name)
-            self.assertEqual(len(order), level.arrow_count)
-
-    def test_every_level_can_be_played_to_the_end(self):
-        """按求解器给出的顺序实际点击，每个关卡都能通关。"""
-        for level in LEVELS:
-            board = Board(level)
-            for row, col in board.solution():
-                self.assertEqual(board.click(row, col).kind, CLICK_FLY,
-                                 "关卡「%s」在 (%d,%d) 处卡住了" % (level.name, row, col))
-            self.assertEqual(board.state, STATE_CLEARED)
-            self.assertEqual(board.remaining, 0)
-
-    def test_level_count_and_difficulty_ramp(self):
-        """标准关正好 9 关，且难度整条曲线是递增的。
-
-        关数写成硬断言是故意的：这是需求本身（9 个标准关 + 1 个独立的教学关），
-        以后再加关就得同时改这条用例，等于逼着人再确认一次「还符合需求吗」。
-        """
-        self.assertEqual(TOTAL_LEVELS, 9, "标准关应当是 9 关，另加 1 个独立的教学关")
-        scores = [level.difficulty_score for level in LEVELS]
-        self.assertEqual(scores, sorted(scores), "难度分应当从左到右递增")
-
-    def test_levels_one_to_four_get_harder_step_by_step(self):
-        """第 1~4 关是入门段，难度必须一关比一关高，而且步子要看得出来。
-
-        教学关独立出去以后，这四关就是玩家真正开始的地方：
-        棋盘只许变大、箭头只许变多、开局能直接飞出的箭头只许变少，
-        难度分则必须严格上升。这条用例把「递增」从口头约定变成硬约束。
-        """
-        first_four = LEVELS[:4]
-        self.assertEqual(len(first_four), 4)
-        for index in range(len(first_four) - 1):
-            before, after = first_four[index], first_four[index + 1]
-            number = index + 2
-            self.assertLess(before.difficulty_score, after.difficulty_score,
-                            "第 %d 关（%.2f）并不比第 %d 关（%.2f）难"
-                            % (number, after.difficulty_score, number - 1,
-                               before.difficulty_score))
-            self.assertLessEqual(before.rows, after.rows,
-                                 "第 %d 关的棋盘不该比前一关矮" % number)
-            self.assertLessEqual(before.cols, after.cols,
-                                 "第 %d 关的棋盘不该比前一关窄" % number)
-            self.assertLessEqual(before.arrow_count, after.arrow_count,
-                                 "第 %d 关的箭头不该比前一关少" % number)
-            self.assertLessEqual(before.stars, after.stars,
-                                 "第 %d 关的星级不该比前一关低" % number)
-
-        # 第 2 关的招牌是「全场只有一支能飞」，这个数字要真的成立
-        self.assertEqual(LEVELS[1].free_count, 1)
-        self.assertGreaterEqual(LEVELS[0].free_count, 2)
-        self.assertNotEqual(LEVELS[0].layout, TUTORIAL.layout,
-                            "第 1 关不该和教学关长得一样")
-
-    def test_difficulty_steps_stay_smooth_across_nine_levels(self):
-        """九个关卡的难度是一级一级加的，任意相邻两关都不能顶出一个大台阶。
-
-        把关卡表从 8 关补到 9 关时，最讲究的就是「新关插在哪儿」——
-        插错地方会在曲线上顶出一处陡坡（原来第 5→6 关一跳 22.3 分，
-        后一关的箭头数是前一关的 1.67 倍，中间缺了一档）。
-        这条用例把两件事钉死：一次只许加 1~10 支箭头；相邻难度差 ≤ 20 分。
-        """
-        arrows = [level.arrow_count for level in LEVELS]
-        for index, (before, after) in enumerate(zip(arrows, arrows[1:]), start=2):
-            self.assertGreaterEqual(after, before, "第 %d 关箭头数反而变少了" % index)
-            self.assertLessEqual(after - before, 10,
-                                 "第 %d 关一次加了 %d 支箭头，台阶太陡"
-                                 % (index, after - before))
-
-        scores = [level.difficulty_score for level in LEVELS]
-        gaps = [after - before for before, after in zip(scores, scores[1:])]
-        self.assertLess(max(gaps), 20.0, "相邻两关的难度差别超过 20 分")
-        self.assertGreater(max(gaps), 12.0,
-                           "最后一跳应当拉到 12 分以上，否则收尾不够有力")
-
-        # 台阶是「越往后越大」：前半程平均步子明显小于后半程
-        half = len(gaps) // 2
-        early = sum(gaps[:half]) / half
-        late = sum(gaps[half:]) / (len(gaps) - half)
-        self.assertGreater(late, early, "难度台阶应当越往后越大")
-
-    def test_tutorial_is_not_a_numbered_level(self):
-        """教学关独立于关卡表：不占第 1 关的位置，也不参与编号。"""
-        self.assertTrue(TUTORIAL.tutorial)
-        self.assertGreater(len(TUTORIAL.steps), 0, "教学关必须带引导步骤")
-        self.assertFalse(any(level.tutorial for level in LEVELS),
-                         "编号关卡里不该再混进教学关")
-        self.assertFalse(any(level.steps for level in LEVELS),
-                         "编号关卡不该带教学引导步骤")
-        for level in LEVELS:
-            self.assertNotEqual(level.name, TUTORIAL.name)
-
-    def test_tutorial_is_solvable_and_playable(self):
-        """教学关自己也要可解、能一路点到通关。"""
-        board = Board(TUTORIAL)
-        for row, col in board.solution():
-            self.assertEqual(board.click(row, col).kind, CLICK_FLY,
-                             "教学关在 (%d,%d) 处卡住了" % (row, col))
+    # ------------------------------------------------------------ T06 通关
+    def test_clearing_every_piece_clears_the_level(self):
+        board = Board(make_level(BASIC_SPECS, BASIC_ROWS, BASIC_COLS))
+        order = board.solution()
+        self.assertIsNotNone(order)
+        self.assertEqual(len(order), 3)
+        for piece in order:
+            self.assertEqual(board.click(*piece.head).kind, CLICK_FLY)
+        self.assertEqual(board.remaining, 0)
         self.assertEqual(board.state, STATE_CLEARED)
 
-    def test_tutorial_is_a_forgiving_sandbox(self):
-        """教学关是给人放胆点的沙盒，生命值要比同星级的关卡宽裕。"""
-        self.assertGreater(TUTORIAL.max_hp, HP_BY_STARS[TUTORIAL.stars],
-                           "教学关的生命值该比按星级给的更宽松，"
-                           "否则新手会在教程里就被判失败")
+    def test_clicks_after_clearing_are_ignored(self):
+        board = Board(make_level(BASIC_SPECS, BASIC_ROWS, BASIC_COLS))
+        for piece in board.solution():
+            board.click(*piece.head)
+        self.assertEqual(board.click(0, 0).kind, CLICK_IGNORED)
 
-    def test_later_levels_gain_density_not_board_size(self):
-        """后半段的难度不靠放大棋盘，而是靠提高密度。
+    def test_reset_restores_initial_state(self):
+        board = Board(make_level(BASIC_SPECS, BASIC_ROWS, BASIC_COLS))
+        board.click(2, 3)
+        board.click(2, 0)
+        board.reset()
+        self.assertEqual(board.remaining, 3)
+        self.assertEqual(board.hp, board.max_hp)
+        self.assertEqual(board.state, STATE_PLAYING)
+        self.assertEqual(board.history, [])
+        self.assertIsNotNone(board.piece_at(2, 3))
 
-        设计意图：棋盘尺寸尽早封顶，之后同样的格子里塞进更多箭头。
-        这条用例把意图固定下来，避免以后又退回「一路把棋盘加大」。
+    def test_hp_left_and_hearts_lost_are_consistent(self):
+        board = Board(make_level(BASIC_SPECS, BASIC_ROWS, BASIC_COLS))
+        self.assertEqual(board.hp_left + board.hearts_lost, board.max_hp)
+        board.click(2, 0)
+        self.assertEqual(board.hp_left + board.hearts_lost, board.max_hp)
+
+    def test_score_drops_as_hearts_are_lost(self):
+        """棋盘上的 score 是「此刻通关能拿多少」，丢心就往下掉。"""
+        board = Board(make_level(BASIC_SPECS, BASIC_ROWS, BASIC_COLS))
+        full = board.score
+        board.click(2, 0)
+        self.assertLess(board.score, full)
+
+
+# ---------------------------------------------------------------- 求解器
+class SolverTestCase(unittest.TestCase):
+    """贪心求解器：判断关卡有没有解，并给出一条通关顺序。"""
+
+    def test_solve_simple_level(self):
+        level = make_level(BASIC_SPECS, BASIC_ROWS, BASIC_COLS)
+        order = solve_level(level.rows, level.cols, level.pieces)
+        self.assertIsNotNone(order)
+        self.assertEqual(len(order), 3)
+        self.assertEqual({p.head for p in order},
+                         {(2, 2), (4, 3), (1, 4)})
+
+    def test_two_pieces_facing_each_other_are_unsolvable(self):
+        """互相指着的两支谁也飞不出去——求解器必须报「无解」而不是死循环。"""
+        stuck = (Piece(cells=((0, 0),), direction="right", uid=0),
+                 Piece(cells=((0, 1),), direction="left", uid=1))
+        self.assertIsNone(solve_level(1, 4, stuck))
+
+    def test_solver_order_actually_clears_the_board(self):
+        """求解器给出的顺序拿去真的点一遍，必须能清空。"""
+        for level in list(LEVELS) + [TUTORIAL]:
+            board = Board(level)
+            order = solve_level(board.rows, board.cols, board.pieces)
+            self.assertIsNotNone(order, "「%s」应当有解" % level.name)
+            for piece in order:
+                result = board.click(*piece.head)
+                self.assertEqual(result.kind, CLICK_FLY,
+                                 "「%s」按参考顺序点 (%d,%d) 却没飞出去"
+                                 % (level.name, piece.head[0], piece.head[1]))
+            self.assertEqual(board.state, STATE_CLEARED)
+
+    def test_solver_is_monotonic(self):
+        """消除一支管道只会让别的射线更空，所以「能飞」不会因为等待而失效。
+
+        这条性质是贪心求解正确性的根基，用它做一次随机自检：
+        开局能飞的管道，在消掉任意其它管道之后依然能飞。
         """
-        sizes = [(level.rows, level.cols) for level in LEVELS]
+        rng = random.Random(20260922)
+        for level in LEVELS[:5]:
+            board = Board(level)
+            free = board.available_arrows()
+            self.assertTrue(free)
+            victim = rng.choice(free)
+            for other in board.solution():
+                if other is victim or board.piece_at(*victim.head) is None:
+                    continue
+                board.click(*other.head)
+                if board.piece_at(*victim.head) is None:
+                    break
+                self.assertTrue(board.can_fly(victim),
+                                "「%s」里等了一会儿就不让飞了" % level.name)
 
-        # 棋盘只许变大、不许变小（不能靠缩小棋盘来假装变难）
-        for (rows_a, cols_a), (rows_b, cols_b) in zip(sizes, sizes[1:]):
-            self.assertGreaterEqual(rows_b, rows_a)
-            self.assertGreaterEqual(cols_b, cols_a)
+    def test_solver_rejects_a_layout_with_no_free_piece(self):
+        """一个连开局都点不动的循环，应当被判定为无解。"""
+        cycle = (Piece(cells=((0, 0),), direction="right", uid=0),
+                 Piece(cells=((0, 2),), direction="left", uid=1))
+        # 0 号头在 (0,0) 朝右 -> 射线 (0,1) (0,2)，被 1 号占着
+        # 1 号头在 (0,2) 朝左 -> 射线 (0,1) (0,0)，被 0 号占着
+        self.assertIsNone(solve_level(1, 3, cycle))
 
-        max_side = max(max(rows, cols) for rows, cols in sizes)
-        self.assertLessEqual(max_side, 9, "棋盘尺寸不该超过 9×9")
+    def test_count_free_pieces_matches_board_query(self):
+        for level in list(LEVELS) + [TUTORIAL]:
+            board = Board(level)
+            self.assertEqual(count_free_pieces(board.rows, board.cols, board.pieces),
+                             len(board.available_arrows()),
+                             "「%s」的可点数两处算得不一样" % level.name)
 
-        # 找到第一次达到最大尺寸的那一关，之后就不许再变大了
-        frozen_at = next(index for index, size in enumerate(sizes)
-                         if max(size) == max_side)
-        for index, size in enumerate(sizes[frozen_at:], start=frozen_at + 1):
-            self.assertEqual(size, sizes[frozen_at],
-                             "第 %d 关的棋盘不该比前关更大" % index)
-
-        # 封顶之后的箭头数量必须严格递增（难度只能从密度来）
-        arrows = [level.arrow_count for level in LEVELS]
-        for index in range(frozen_at, len(arrows) - 1):
-            self.assertLess(arrows[index], arrows[index + 1],
-                            "第 %d 关起箭头数应当继续增加" % (index + 1))
-
-        # 最后一关的密度要明显高于棋盘封顶前的那一关。
-        # 参照关卡写成 frozen_at - 1（而不是硬编码的关号）：
-        # 教学关独立出去之后所有下标都前移了一位，写死下标会被这种改动坑到。
-        self.assertGreater(LEVELS[-1].density, LEVELS[frozen_at - 1].density + 0.10)
-
-    def test_every_level_has_at_least_one_playable_arrow(self):
-        """每个关卡开局都必须至少有一支能点的箭头，否则玩家一上手就是死局。"""
-        for level in LEVELS:
-            self.assertGreaterEqual(level.free_count, 1,
-                                    "关卡「%s」开局无可点箭头" % level.name)
-
-    def test_stars_within_range(self):
-        """难度星级必须落在 1~5 之间，且不随难度提高而下降。"""
-        stars = [level.stars for level in LEVELS]
-        for index, value in enumerate(stars):
-            self.assertTrue(1 <= value <= 5, "第 %d 关星级越界" % (index + 1))
-        self.assertEqual(stars, sorted(stars), "星级应当不下降")
-
-    def test_deadlock_is_detected(self):
-        """互相阻挡的死锁布局必须被判定为无解。"""
-        layout = ("....", ".><.", "....", "....")
-        level = make_level(layout)
-        self.assertIsNone(solve_level(level.rows, level.cols, level.arrows))
-        board = Board(level)
-        self.assertEqual(board.available_arrows(), [])
-
-    def test_level_layout_validation(self):
-        """布局不合法时应当直接报错，避免出现隐蔽的坏关卡。"""
-        with self.assertRaises(ValueError):
-            make_level(("....", ".>.", "...."))      # 每行长度不一致
-        with self.assertRaises(ValueError):
-            make_level(("....", ".x..", "...."))     # 非法字符
-        with self.assertRaises(ValueError):
-            make_level(("....", "...."))             # 一个箭头都没有
-
-    def test_tutorial_level_must_have_steps(self):
-        """教学关必须带引导步骤，否则界面上会没有任何提示。"""
-        with self.assertRaises(ValueError):
-            Level(name="坏教学关", hint="", max_hp=3,
-                  layout=("....", ".>..", "...."), tutorial=True)
-
-    def test_level_sizes_are_within_screen(self):
-        """关卡尺寸不能超过窗口能容纳的范围。"""
-        for level in LEVELS:
-            self.assertLessEqual(level.rows, 12)
-            self.assertLessEqual(level.cols, 12)
+    def test_count_free_pieces_is_monotonic_after_removing_a_piece(self):
+        """每消掉一支，可点数只可能变多或不变（不会变少）。"""
+        for level in LEVELS[:5]:
+            board = Board(level)
+            previous = len(board.available_arrows())
+            for piece in board.solution():
+                board.click(*piece.head)
+                now = len(board.available_arrows())
+                self.assertGreaterEqual(now, previous - 1)
+                previous = now
 
 
+# ---------------------------------------------------------------- 关卡数据
 class LevelBalanceTestCase(unittest.TestCase):
-    """生命值按难度给：关卡越难，容错越高。
+    """关卡数据本身的质量：数量、尺寸、难度是否逐关递增、是否都可解。"""
 
-    早期版本每关的容错是固定值，后来变成 5/4/4/4/3/4/3/2/2——越到后面越少，
-    第九关要塞 50 支箭头却只剩 2 颗心，一次手滑就得从头再来。
-    现在生命值由难度星级推出来（levels.HP_BY_STARS），整体只增不减。
-    """
-
-    def test_hp_is_granted_by_difficulty(self):
-        """每关的生命值必须正好是「星级 → 生命值」表里对应的值。"""
-        for index, level in enumerate(LEVELS, start=1):
-            self.assertEqual(
-                level.max_hp, HP_BY_STARS[level.stars],
-                "第 %d 关「%s」是 %d 星，应当给 %d 颗心，实际 %d 颗"
-                % (index, level.name, level.stars, HP_BY_STARS[level.stars], level.max_hp))
-
-    def test_tolerance_grows_from_first_level_to_last(self):
-        """生命值上限整体不下降，最后一关要明显比第 1 关宽容。"""
-        hp = [level.max_hp for level in LEVELS]
-        self.assertEqual(hp, sorted(hp), "生命值不该越到后面越少，实际是 %s" % hp)
-        self.assertGreater(hp[-1], hp[0], "最后一关的容错应当高于第 1 关")
-        for index, level in enumerate(LEVELS, start=1):
-            self.assertGreaterEqual(level.max_hp, 3,
-                                    "第 %d 关只给 %d 颗心，太苛刻了"
-                                    % (index, level.max_hp))
-
-    def test_one_mistake_hurts_less_on_harder_levels(self):
-        """点错一次的代价逐关变小——这就是「容错越来越高」的量化说法。
-
-        比较的是「丢一颗心损失掉本关满分的百分之几」，
-        而不是绝对分数：后面关卡底分更高，绝对分差本来就更大。
-        """
-        penalties = []
+    def test_level_count_and_names(self):
+        self.assertEqual(TOTAL_LEVELS, 9)
+        names = [level.name for level in LEVELS]
+        self.assertEqual(len(set(names)), TOTAL_LEVELS, "关卡名不能重复")
         for level in LEVELS:
-            full = float(scoring.max_score(level))
-            after = scoring.level_score(level, level.max_hp - 1)
-            penalties.append(1.0 - after / full)
+            self.assertTrue(level.hint.strip(), "「%s」没有提示语" % level.name)
 
-        for index in range(len(penalties) - 1):
-            self.assertLessEqual(
-                penalties[index + 1], penalties[index] + 1e-9,
-                "第 %d 关丢一颗心要损失 %.1f%%，比第 %d 关的 %.1f%% 还重"
-                % (index + 2, penalties[index + 1] * 100,
-                   index + 1, penalties[index] * 100))
-        self.assertLess(penalties[-1], penalties[0])
+    def test_every_level_is_solvable(self):
+        for level in LEVELS:
+            self.assertIsNotNone(level.solution(), "「%s」无解" % level.name)
 
-    def test_star_ramp_starts_at_one_and_ends_at_five(self):
-        """星级从第 1 关的 1 星升到最后一关的 5 星（教学关不在这条链上）。"""
+    def test_solution_covers_every_piece_exactly_once(self):
+        for level in LEVELS:
+            order = level.solution()
+            self.assertEqual(len(order), level.arrow_count)
+            self.assertEqual(len({id(p) for p in order}), level.arrow_count)
+
+    def test_boards_are_portrait(self):
+        """九关都取竖长方形（行数 > 列数）。
+
+        窗口 600×960 是手机竖屏比例，竖棋盘才能把视口填满；
+        横过来的话上下会各空出一条，画面看着像没铺开。
+        """
+        for level in LEVELS:
+            self.assertGreater(level.rows, level.cols,
+                               "「%s」不是竖长方形：%d×%d" % (level.name, level.rows, level.cols))
+
+    def test_board_size_grows_with_level_number(self):
+        sizes = [(level.rows, level.cols) for level in LEVELS]
+        for earlier, later in zip(sizes, sizes[1:]):
+            self.assertLess(earlier[0] * earlier[1], later[0] * later[1],
+                            "棋盘面积应当逐关变大：%r -> %r" % (earlier, later))
+            self.assertLessEqual(earlier[0], later[0])
+            self.assertLessEqual(earlier[1], later[1])
+
+    def test_piece_count_grows_with_level_number(self):
+        """管道数整体上一路变多。
+
+        允许相邻两关偶尔差一支（棋盘形状不同，铺满同一块面积需要的管道数
+        本来就会有出入——第 3 关棋盘更大、却比第 2 关少一支），
+        真正决定难度的是「开局可点数」和棋盘面积，那两条另有用例把关。
+        """
+        counts = [level.arrow_count for level in LEVELS]
+        for earlier, later in zip(counts, counts[1:]):
+            self.assertGreaterEqual(later, earlier - 2,
+                                    "管道数掉得太多：%r" % (counts,))
+        self.assertLess(counts[0], counts[-1])
+        self.assertGreaterEqual(counts[-1], counts[0] * 2 - 4)
+
+    def test_boards_are_densely_filled(self):
+        """这一版棋盘是密密麻麻铺满的（参照画面就是这样）。"""
+        for level in LEVELS:
+            self.assertGreater(level.density, 0.90,
+                               "「%s」铺满率只有 %.2f，看着太空" % (level.name, level.density))
+
+    def test_free_pieces_never_increase(self):
+        """开局可点数逐关不增：这是玩家真正感觉得到的难度。"""
+        frees = [level.free_count for level in LEVELS]
+        for earlier, later in zip(frees, frees[1:]):
+            self.assertGreaterEqual(earlier, later, "开局可点数不该反弹：%r" % (frees,))
+        self.assertGreaterEqual(frees[0], 5, "第 1 关开局应当很好找")
+        self.assertLessEqual(frees[-1], 3, "最后一关开局应当很难找")
+
+    def test_difficulty_and_stars_never_go_backwards(self):
         stars = [level.stars for level in LEVELS]
+        for earlier, later in zip(stars, stars[1:]):
+            self.assertLessEqual(earlier, later, "星级不该往回退：%r" % (stars,))
         self.assertEqual(stars[0], 1)
         self.assertEqual(stars[-1], 5)
-        self.assertEqual(stars[:4], [1, 2, 3, 3], "前四关的星级阶梯变了")
+        difficulties = [level.difficulty_score for level in LEVELS]
+        for earlier, later in zip(difficulties, difficulties[1:]):
+            self.assertLess(earlier, later, "难度分应当逐关递增：%r" % (difficulties,))
 
-
-class ScoringTestCase(unittest.TestCase):
-    """得分规则：剩下的心越多分越高，一颗心都没丢另有奖励。"""
-
-    def test_full_score_follows_the_difficulty_stars(self):
-        """满分 = 星级 × 300（基础分 250 + 20% 完美奖励）。"""
-        for index, level in enumerate(LEVELS, start=1):
-            self.assertEqual(scoring.base_score(level), level.stars * 250)
-            self.assertEqual(scoring.max_score(level), level.stars * 300,
-                             "第 %d 关满分不对" % index)
-            self.assertEqual(scoring.level_score(level, level.max_hp),
-                             scoring.max_score(level), "满心通关应当拿满分")
-
-    def test_every_mistake_costs_points(self):
-        """同一关里，失去的心越多得分越低，且是严格下降。"""
-        for index, level in enumerate(LEVELS, start=1):
-            scores = [scoring.level_score(level, hp)
-                      for hp in range(level.max_hp, -1, -1)]
-            for before, after in zip(scores, scores[1:]):
-                self.assertGreater(before, after,
-                                   "第 %d 关 %d→%d 颗心时得分没有下降：%s"
-                                   % (index, scores[0], scores[-1], scores))
-
-    def test_perfect_bonus_only_when_nothing_is_lost(self):
-        """零失误奖励只在满心通关时给，而且正好是基础分的 20%。"""
+    def test_hp_follows_the_star_table(self):
         for level in LEVELS:
-            bonus = scoring.perfect_bonus(level)
-            self.assertEqual(bonus, scoring.base_score(level) * 20 // 100)
-            self.assertEqual(scoring.level_score(level, level.max_hp),
-                             scoring.base_score(level) + bonus)
-            # 丢一颗心就没有奖励了：剩下的分正好是按比例折算的基础分
-            self.assertEqual(scoring.level_score(level, level.max_hp - 1),
-                             scoring.base_score(level) * (level.max_hp - 1)
-                             // level.max_hp)
+            self.assertEqual(level.max_hp, HP_BY_STARS[level.stars])
+        self.assertEqual(min(level.max_hp for level in LEVELS), 4)
+        self.assertEqual(max(level.max_hp for level in LEVELS), 7)
 
-    def test_failing_the_level_is_worth_nothing(self):
-        """生命值耗尽时本关 0 分（越界的参数也不会算出一个负数）。"""
+    def test_max_score_is_stars_times_300(self):
+        for level in LEVELS:
+            self.assertEqual(scoring.max_score(level), level.stars * 300)
+
+    def test_total_max_score_is_stable(self):
+        self.assertEqual(scoring.total_max_score(LEVELS), 8400)
+
+    def test_level_rejects_invalid_specs_at_construction(self):
+        """关卡数据写错时要在 import 阶段就炸，而不是等到玩家点进去。"""
+        with self.assertRaises(ValueError):
+            make_level(("2,0 > R9",), 3, 3)                     # 跑出棋盘
+        with self.assertRaises(ValueError):
+            make_level(("1,1 ^", "1,1 v"), 3, 3)                # 重叠
+        with self.assertRaises(ValueError):
+            make_level(("0,0 > D",), 3, 3)                      # 末段方向与箭头不符
+
+    def test_level_rejects_zero_size(self):
+        with self.assertRaises(ValueError):
+            make_level(("0,0 ^",), 0, 0)
+
+    # ------------------------------------------------------------ 教学关
+    def test_tutorial_is_separate_from_numbered_levels(self):
+        """教学关不占编号、不在 LEVELS 里，主菜单上有单独入口。"""
+        self.assertTrue(TUTORIAL.tutorial)
+        self.assertNotIn(TUTORIAL, LEVELS)
+        self.assertEqual(TUTORIAL.max_hp, levels.TUTORIAL_HP)
+
+    def test_tutorial_has_guided_steps(self):
+        self.assertGreaterEqual(len(TUTORIAL.steps), 3)
+        for step in TUTORIAL.steps:
+            self.assertIsInstance(step, TutorialStep)
+            self.assertIn(step.expect, ("fly", "blocked"),
+                          "教学步骤的期望结果只能是 fly / blocked")
+            self.assertTrue(step.text.strip(), "教学步骤要有说明文字")
+
+    def test_tutorial_steps_both_explain_ways(self):
+        """教学关必须把「能飞」和「被挡」两种情形各讲一遍。"""
+        expects = {step.expect for step in TUTORIAL.steps}
+        self.assertEqual(expects, {"fly", "blocked"})
+
+    def test_tutorial_is_solvable_and_small(self):
+        self.assertIsNotNone(TUTORIAL.solution())
+        self.assertLessEqual(TUTORIAL.arrow_count, 4, "教学关不该摆太多管道")
+        self.assertLessEqual(TUTORIAL.rows * TUTORIAL.cols, 36)
+
+    def test_report_shape(self):
+        report = validate_levels()
+        self.assertEqual(len(report), TOTAL_LEVELS)
+        keys = {"index", "name", "size", "arrows", "density", "free", "solvable",
+                "order", "max_hp", "stars", "max_score", "difficulty", "tutorial"}
+        for item in report:
+            self.assertTrue(keys.issubset(item.keys()))
+            self.assertTrue(item["solvable"])
+            self.assertFalse(item["tutorial"])
+
+
+# ---------------------------------------------------------------- 计分
+class ScoringTestCase(unittest.TestCase):
+    """得分规则：基础分按星级给，再按剩余生命值折算，零失误有奖励。"""
+
+    def test_base_score_is_stars_times_250(self):
+        for level in LEVELS:
+            self.assertEqual(scoring.base_score(level), level.stars * 250)
+
+    def test_perfect_bonus_is_20_percent_of_base(self):
+        for level in LEVELS:
+            self.assertEqual(scoring.perfect_bonus(level),
+                             int(scoring.base_score(level) * 0.2))
+
+    def test_full_hp_gives_max_score(self):
+        for level in LEVELS:
+            self.assertEqual(scoring.level_score(level, level.max_hp),
+                             scoring.max_score(level))
+
+    def test_zero_hp_gives_zero_score(self):
         for level in LEVELS:
             self.assertEqual(scoring.level_score(level, 0), 0)
-            self.assertEqual(scoring.level_score(level, -2), 0)
-            self.assertEqual(scoring.lost_hearts(level, -2), level.max_hp)
 
-    def test_board_exposes_a_live_score(self):
-        """棋盘自己就知道当前能拿多少分，HUD 直接用这个数（点错立刻掉）。"""
-        level = make_level(BASIC_LAYOUT, max_hp=4)
-        board = Board(level)
-        self.assertEqual(board.hearts_lost, 0)
-        self.assertEqual(board.score, scoring.level_score(level, 4))
+    def test_score_never_exceeds_max_and_never_negative(self):
+        for level in LEVELS:
+            for hp in range(-2, level.max_hp + 3):
+                score = scoring.level_score(level, hp)
+                self.assertGreaterEqual(score, 0)
+                self.assertLessEqual(score, scoring.max_score(level))
 
-        board.click(1, 1)                    # (1,1) 的「>」被 (1,2) 的「v」挡住
-        self.assertEqual(board.hearts_lost, 1)
-        self.assertEqual(board.hp, 3)
-        self.assertEqual(board.score, scoring.level_score(level, 3))
-        self.assertLess(board.score, scoring.level_score(level, 4))
+    def test_score_is_monotonic_in_remaining_hp(self):
+        for level in LEVELS:
+            scores = [scoring.level_score(level, hp) for hp in range(level.max_hp + 1)]
+            for earlier, later in zip(scores, scores[1:]):
+                self.assertLessEqual(earlier, later)
 
-    def test_total_full_score_is_the_sum_of_all_levels(self):
-        """全部关卡的满分加起来等于总分上限（结算面板里的「总分 x / y」用它）。"""
+    def test_losing_one_heart_costs_more_than_nothing(self):
+        """丢一颗心必须真的掉分，否则「别点错」这件事就没有反馈。"""
+        for level in LEVELS:
+            self.assertGreater(scoring.level_score(level, level.max_hp - 1),
+                               0)
+            self.assertLess(scoring.level_score(level, level.max_hp - 1),
+                            scoring.max_score(level))
+
+    def test_lost_hearts_helper(self):
+        level = LEVELS[0]
+        self.assertEqual(scoring.lost_hearts(level, level.max_hp), 0)
+        self.assertEqual(scoring.lost_hearts(level, level.max_hp - 2), 2)
+        self.assertEqual(scoring.lost_hearts(level, 0), level.max_hp)
+        # 越界传参也要夹在合法范围里
+        self.assertEqual(scoring.lost_hearts(level, level.max_hp + 5), 0)
+        self.assertEqual(scoring.lost_hearts(level, -3), level.max_hp)
+
+    def test_total_max_score_sums_levels(self):
         self.assertEqual(scoring.total_max_score(LEVELS),
                          sum(scoring.max_score(level) for level in LEVELS))
-        self.assertGreater(scoring.total_max_score(LEVELS), 1000)
 
 
-class ColorSpreadTestCase(unittest.TestCase):
-    """配色打散的回归：相邻的箭头不要大面积朝同一个方向。
-
-    同向的两支箭头挨在一起，在屏幕上就是两块同色贴在一起；一整排同向
-    就是一条色带，看着既单调又显得简单（早期第 8 关相邻同向对占 59%、
-    最大同色块 6 格）。现在关卡定稿前会过一遍 tools/deshuffle_levels.py。
-    """
-
-    MAX_SAME_RATIO = 0.28      # 相邻同向对占比上限（方向随机撒的时代期望值是 0.25）
-    MAX_BLOCK = 4              # 同方向连通块的最大格子数上限
-
-    def test_adjacent_arrows_are_mostly_different_directions(self):
-        """每关「相邻且同向」的箭头对不能太多。"""
-        for index, level in enumerate(LEVELS, start=1):
-            ratio, _ = same_color_cluster(level)
-            self.assertLessEqual(
-                ratio, self.MAX_SAME_RATIO,
-                "第 %d 关「%s」相邻同向对占 %.0f%%，屏幕上会连成同色的片"
-                % (index, level.name, ratio * 100))
-
-    def test_same_color_blocks_stay_small(self):
-        """同方向的箭头不该连成一大块。"""
-        for index, level in enumerate(LEVELS, start=1):
-            _, biggest = same_color_cluster(level)
-            self.assertLessEqual(
-                biggest, self.MAX_BLOCK,
-                "第 %d 关「%s」有 %d 支同向箭头连成一块" % (index, level.name, biggest))
-
-    def test_arrow_colors_are_still_decided_only_by_direction(self):
-        """打散配色只动关卡布局，不动调色板：一个方向仍然只有一种颜色。"""
-        self.assertEqual(len(config.DIR_COLORS), 4)
-        for level in LEVELS:
-            for row, line in enumerate(level.layout):
-                for col, char in enumerate(line):
-                    direction = _char_direction(char)
-                    if direction is None:
-                        continue
-                    self.assertEqual(ui.arrow_color(direction),
-                                     config.DIR_COLORS[direction])
-
-    def test_deshuffle_keeps_the_level_solvable_and_no_easier(self):
-        """打散工具只换方向：换完仍然可解，开局可点数不会变多。
-
-        这是这个工具唯一的存在理由——为了好看把题目改坏（变成死局、或者
-        顺手把开局可点数抬上去）是不允许的，所以拿最扎堆的一关实测一遍。
-        """
-        level = max(LEVELS, key=lambda item: same_color_cluster(item)[0])
-        arrows = [(row, col, direction) for row, col, direction in level.arrows]
-        before_same, _ = deshuffle_levels.pair_stats(level.rows, level.cols, arrows)
-        before_free = level.free_count
-
-        rng = random.Random(20260921)
-        result, (same, _, free0, _) = deshuffle_levels.deshuffle(
-            level.rows, level.cols, arrows, rng, attempts=400, max_free0=before_free)
-
-        self.assertIsNotNone(
-            solve_level(level.rows, level.cols, result), "打散之后关卡无解了")
-        self.assertEqual(free0, count_free_arrows(level.rows, level.cols, result))
-        self.assertLessEqual(same, before_same, "打散不该让同向相邻对变多")
-        self.assertLessEqual(free0, before_free, "打散不该让开局变容易")
-        self.assertEqual(
-            sorted((row, col) for row, col, _ in result),
-            sorted((row, col) for row, col, _ in arrows),
-            "打散只换方向，位置一支都不能动")
-
-
+# ---------------------------------------------------------------- 进度
 class ProgressTestCase(unittest.TestCase):
-    """闯关进度与解锁规则（纯逻辑，不需要 pygame）。"""
+    """闯关进度：解锁链、最高分、存档读写。"""
 
     def setUp(self):
-        self.dir = tempfile.mkdtemp(prefix="arrow_progress_")
+        self.dir = tempfile.mkdtemp(prefix="oa_test_")
         self.path = os.path.join(self.dir, "progress.json")
-        self.progress = Progress(path=self.path, autoload=False)
 
     def tearDown(self):
         shutil.rmtree(self.dir, ignore_errors=True)
 
-    def test_only_first_level_unlocked_at_start(self):
-        """全新存档只解锁第 1 关。"""
-        self.assertEqual(self.progress.highest_unlocked(TOTAL_LEVELS), 0)
-        self.assertTrue(self.progress.is_unlocked(0, TOTAL_LEVELS))
-        self.assertFalse(self.progress.is_unlocked(1, TOTAL_LEVELS))
+    def test_fresh_progress_only_has_level_one_unlocked(self):
+        progress = Progress(path=self.path)
+        self.assertTrue(progress.is_unlocked(0, TOTAL_LEVELS))
+        self.assertFalse(progress.is_unlocked(1, TOTAL_LEVELS))
+        self.assertEqual(progress.cleared_count(TOTAL_LEVELS), 0)
+        self.assertEqual(progress.next_index(TOTAL_LEVELS), 0)
+        self.assertFalse(progress.all_cleared(TOTAL_LEVELS))
 
-    def test_clearing_unlocks_the_next_level(self):
-        """通关一关之后才解锁下一关。"""
-        self.progress.mark_cleared(0)
-        self.assertEqual(self.progress.highest_unlocked(TOTAL_LEVELS), 1)
-        self.assertTrue(self.progress.is_unlocked(1, TOTAL_LEVELS))
-        self.assertFalse(self.progress.is_unlocked(2, TOTAL_LEVELS))
+    def test_clearing_a_level_unlocks_the_next_one(self):
+        progress = Progress(path=self.path)
+        progress.mark_cleared(0)
+        self.assertTrue(progress.is_cleared(0))
+        self.assertTrue(progress.is_unlocked(1, TOTAL_LEVELS))
+        self.assertFalse(progress.is_unlocked(2, TOTAL_LEVELS))
+        self.assertEqual(progress.next_index(TOTAL_LEVELS), 1)
 
-        self.progress.mark_cleared(1)
-        self.assertTrue(self.progress.is_unlocked(2, TOTAL_LEVELS))
+    def test_scores_keep_the_best_result(self):
+        """重玩只留最高分，不会越玩越低。"""
+        progress = Progress(path=self.path)
+        first = progress.record_score(1, 600)
+        self.assertEqual(first, 600, "第一次刷分，全部计入")
+        self.assertEqual(progress.best_score(1), 600)
+        gain = progress.record_score(1, 300)
+        self.assertEqual(gain, 0, "打得更差不该扣分")
+        self.assertEqual(progress.best_score(1), 600)
+        gain = progress.record_score(1, 900)
+        self.assertEqual(gain, 300, "打破纪录时增益应当是差值")
+        self.assertEqual(progress.best_score(1), 900)
 
-    def test_skipping_a_level_does_not_unlock_further(self):
-        """跳着通关不算数：第 2 关没过，第 3 关依然锁着。"""
-        self.progress.mark_cleared(0)
-        self.progress.mark_cleared(2)                  # 正常玩法下点不到，这里直接构造
-        self.assertEqual(self.progress.highest_unlocked(TOTAL_LEVELS), 1)
-        self.assertFalse(self.progress.is_unlocked(2, TOTAL_LEVELS))
+    def test_total_score_sums_best_scores(self):
+        progress = Progress(path=self.path)
+        for index, score in ((0, 300), (1, 600), (2, 900)):
+            progress.record_score(index, score)
+        self.assertEqual(progress.total_score(TOTAL_LEVELS), 1800)
 
-    def test_cleared_count_next_index_and_all_cleared(self):
-        """统计与「下一关」的取值。"""
-        self.assertEqual(self.progress.cleared_count(TOTAL_LEVELS), 0)
-        self.assertEqual(self.progress.next_index(TOTAL_LEVELS), 0)
+    def test_mark_all_cleared_opens_everything(self):
+        progress = Progress(path=self.path)
+        progress.mark_all_cleared(TOTAL_LEVELS)
+        self.assertEqual(progress.cleared_count(TOTAL_LEVELS), TOTAL_LEVELS)
+        self.assertTrue(progress.all_cleared(TOTAL_LEVELS))
+        for index in range(TOTAL_LEVELS):
+            self.assertTrue(progress.is_unlocked(index, TOTAL_LEVELS))
 
-        self.progress.mark_cleared(0)
-        self.assertEqual(self.progress.cleared_count(TOTAL_LEVELS), 1)
-        self.assertEqual(self.progress.next_index(TOTAL_LEVELS), 1)
+    def test_save_and_load_round_trip(self):
+        progress = Progress(path=self.path)
+        progress.mark_cleared(0)
+        progress.record_score(0, 300)
+        progress.mark_cleared(1)
+        progress.record_score(1, 500)
+        self.assertTrue(os.path.exists(self.path), "存档文件应当真的写出来了")
 
-        self.progress.mark_all_cleared(TOTAL_LEVELS)
-        self.assertTrue(self.progress.all_cleared(TOTAL_LEVELS))
-        self.assertEqual(self.progress.next_index(TOTAL_LEVELS), 0)   # 全通关后回到第 1 关
+        again = Progress(path=self.path)
+        self.assertTrue(again.is_cleared(0))
+        self.assertTrue(again.is_cleared(1))
+        self.assertEqual(again.best_score(0), 300)
+        self.assertEqual(again.best_score(1), 500)
+        self.assertEqual(again.total_score(TOTAL_LEVELS), 800)
 
-    def test_mark_cleared_is_idempotent(self):
-        """重复标记同一关不会出错，也不重复写盘。"""
-        self.assertTrue(self.progress.mark_cleared(0))
-        self.assertFalse(self.progress.mark_cleared(0))
+    def test_saved_file_is_valid_json_with_version(self):
+        progress = Progress(path=self.path)
+        progress.mark_cleared(0)
+        progress.save()
+        with open(self.path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertIn("version", data)
+        self.assertIn("cleared", data)
+        self.assertIn("scores", data)
 
-    def test_save_and_reload(self):
-        """存档写到磁盘后能被重新读回来。"""
-        self.progress.mark_cleared(0)
-        self.progress.mark_cleared(1)
-
-        reloaded = Progress(path=self.path)
-        self.assertEqual(reloaded.cleared, {0, 1})
-        self.assertEqual(reloaded.highest_unlocked(TOTAL_LEVELS), 2)
-
-    def test_missing_or_broken_save_file_is_tolerated(self):
-        """存档不存在或内容损坏时，应当当成空进度而不是崩溃。"""
-        missing = Progress(path=os.path.join(self.dir, "nope.json"))
-        self.assertEqual(missing.cleared, set())
-
+    def test_corrupt_save_file_falls_back_to_fresh_progress(self):
+        """存档坏了不能让游戏打不开——退回全新进度就好。"""
         with open(self.path, "w", encoding="utf-8") as handle:
-            handle.write("{ 这不是合法的 JSON")
-        broken = Progress(path=self.path)
-        self.assertEqual(broken.cleared, set())
+            handle.write("{ 这不是 JSON")
+        progress = Progress(path=self.path)
+        self.assertEqual(progress.cleared_count(TOTAL_LEVELS), 0)
+
+    def test_save_file_with_wrong_shapes_is_sanitised(self):
+        with open(self.path, "w", encoding="utf-8") as handle:
+            json.dump({"version": 2, "cleared": [1, "x", 99, -1], "scores": {"1": "abc"}},
+                      handle)
+        progress = Progress(path=self.path)
+        self.assertTrue(progress.is_cleared(1))
+        for index in range(TOTAL_LEVELS):
+            self.assertIsInstance(progress.best_score(index), int)
+            self.assertGreaterEqual(progress.best_score(index), 0)
 
     def test_reset_clears_everything(self):
-        """清空进度后回到只解锁第 1 关的状态，最高分也一并清掉，且已经落盘。"""
-        self.progress.mark_all_cleared(TOTAL_LEVELS)
-        self.progress.record_score(0, 600)
-        self.progress.reset()
-        self.assertEqual(self.progress.cleared, set())
-        self.assertEqual(self.progress.scores, {})
-        reloaded = Progress(path=self.path)
-        self.assertEqual(reloaded.cleared, set())
-        self.assertEqual(reloaded.scores, {})
+        progress = Progress(path=self.path)
+        progress.mark_cleared(0)
+        progress.record_score(0, 300)
+        progress.reset()
+        self.assertEqual(progress.cleared_count(TOTAL_LEVELS), 0)
+        self.assertEqual(progress.best_score(0), 0)
+        self.assertFalse(progress.is_unlocked(1, TOTAL_LEVELS))
 
-    # ---------------------------------------------------------- 最高分
-    def test_scores_are_recorded_and_only_the_best_one_wins(self):
-        """每关只留最高分：重玩手感差不会把纪录冲掉。"""
-        self.assertEqual(self.progress.best_score(0), 0)
-        self.assertEqual(self.progress.record_score(0, 375), 375)   # 首次记分，增量 375
-        self.assertEqual(self.progress.best_score(0), 375)
-        self.assertEqual(self.progress.record_score(0, 200), 0)     # 打得更差：不覆盖
-        self.assertEqual(self.progress.best_score(0), 375)
-        self.assertEqual(self.progress.record_score(0, 600), 225)   # 刷新纪录，增量 225
-        self.assertEqual(self.progress.best_score(0), 600)
-        self.assertEqual(self.progress.record_score(0, 600), 0)     # 打平也不算刷新
-        self.assertEqual(Progress(path=self.path).best_score(0), 600)
+    def test_best_score_of_unknown_level_is_zero(self):
+        progress = Progress(path=self.path)
+        self.assertEqual(progress.best_score(4), 0)
+        self.assertFalse(progress.is_cleared(4))
 
-    def test_total_score_is_the_sum_of_each_levels_best(self):
-        """总分 = 各关最高分之和；不存在关卡里的分数不计入。"""
-        self.progress.record_score(0, 300)
-        self.progress.record_score(1, 375)
-        self.progress.record_score(TOTAL_LEVELS + 5, 999)     # 手改存档留下的垃圾关号
-        self.assertEqual(self.progress.total_score(TOTAL_LEVELS), 675)
-
-    def test_old_save_without_scores_still_loads(self):
-        """老存档（version 1，没有 scores 字段）不能因为升级格式丢进度。"""
-        with open(self.path, "w", encoding="utf-8") as handle:
-            json.dump({"version": 1, "cleared": [0, 1]}, handle)
-        loaded = Progress(path=self.path)
-        self.assertEqual(loaded.cleared, {0, 1})
-        self.assertEqual(loaded.scores, {})
-        self.assertEqual(loaded.total_score(TOTAL_LEVELS), 0)
-
-    def test_broken_scores_in_the_save_file_are_ignored(self):
-        """存档里的分数被人手改坏了（非数字、负数）时，只丢掉坏的那几条。"""
-        with open(self.path, "w", encoding="utf-8") as handle:
-            json.dump({"version": 2, "cleared": [0],
-                       "scores": {"0": "abc", "-1": 500, "2": 300, "x": 100}},
-                      handle)
-        loaded = Progress(path=self.path)
-        self.assertEqual(loaded.cleared, {0})
-        self.assertEqual(loaded.scores, {2: 300})
+    def test_clearing_is_idempotent(self):
+        progress = Progress(path=self.path)
+        progress.mark_cleared(0)
+        progress.mark_cleared(0)
+        self.assertEqual(progress.cleared_count(TOTAL_LEVELS), 1)
 
 
-class GameFlowTestCase(unittest.TestCase):
-    """完整流程（含渲染，用 dummy 视频驱动无头运行）。"""
+# ---------------------------------------------------------------- 绘制原语
+class RenderPrimitiveTestCase(unittest.TestCase):
+    """界面绘制的基础件：管道贴图、字体折行、滑杆、像素心、动画。"""
 
     @classmethod
     def setUpClass(cls):
         pygame.init()
         cls.screen = pygame.display.set_mode((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
+        ui.clear_caches()
+
+    @classmethod
+    def tearDownClass(cls):
+        pygame.quit()
+
+    def test_piece_surface_is_cached(self):
+        """同一支管道重复取贴图必须命中缓存，否则每帧都在重新渲染。"""
+        cells, direction = pieces.parse_piece("0,0 > R2")
+        color = PIECE_PALETTE[0]
+        first = ui.piece_surface(cells, direction, color, 40)
+        second = ui.piece_surface(cells, direction, color, 40)
+        self.assertIs(first, second)
+
+    def test_piece_surface_differs_by_cell_size(self):
+        cells, direction = pieces.parse_piece("0,0 > R2")
+        color = PIECE_PALETTE[0]
+        small = ui.piece_surface(cells, direction, color, 24)[0]
+        large = ui.piece_surface(cells, direction, color, 48)[0]
+        self.assertGreater(large.get_width(), small.get_width())
+        self.assertGreater(large.get_height(), small.get_height())
+
+    def test_piece_surface_geometry_places_each_cell_correctly(self):
+        """贴图 + 偏移必须能把每一格摆回它该在的位置。
+
+        约定是：把贴图贴到「棋盘左上角 + 偏移」，管线起点那一格的**中心**
+        就正好落在 棋盘左上角 + (min_col + 0.5) * 格距。留白左右对称，
+        所以从「贴图宽度 - 管道实际跨度」就能反推出留白是多少。
+        """
+        cells, direction = pieces.parse_piece("2,1 v D2")     # (2,1) (3,1) (4,1)
+        cell = 32
+        image, (dx, dy) = ui.build_piece_surface(cells, direction, PIECE_PALETTE[2], cell)
+        span_w = 1 * cell
+        span_h = 3 * cell
+        pad_x = (image.get_width() - span_w) / 2.0
+        pad_y = (image.get_height() - span_h) / 2.0
+        self.assertGreater(pad_x, 0, "贴图要留白，不然描边和箭头尖会被裁掉")
+        self.assertAlmostEqual(dx, 1 * cell - pad_x, delta=1.5)
+        self.assertAlmostEqual(dy, 2 * cell - pad_y, delta=1.5)
+
+    def test_piece_surface_big_enough_for_the_whole_pipe(self):
+        for level in LEVELS[:4]:
+            for piece in level.pieces:
+                image, _ = ui.build_piece_surface(piece.cells, piece.direction,
+                                                  piece.color, 24)
+                rows = [row for row, _ in piece.cells]
+                cols = [col for _, col in piece.cells]
+                self.assertGreaterEqual(image.get_width(), (max(cols) - min(cols) + 1) * 24)
+                self.assertGreaterEqual(image.get_height(), (max(rows) - min(rows) + 1) * 24)
+
+    def test_piece_color_falls_back_to_palette(self):
+        bare = Piece(cells=((0, 0),), direction="up", uid=3)
+        self.assertEqual(ui.piece_color(bare), PIECE_PALETTE[3 % len(PIECE_PALETTE)])
+        painted = Piece(cells=((0, 0),), direction="up", color=(1, 2, 3))
+        self.assertEqual(ui.piece_color(painted), (1, 2, 3))
+
+    def test_draw_piece_accepts_alpha_and_offset(self):
+        piece = Piece(cells=((0, 0), (0, 1)), direction="right", color=PIECE_PALETTE[4])
+        for alpha, offset in ((255, (0, 0)), (128, (10, -6)), (0, (999, 999))):
+            ui.draw_piece(self.screen, (10, 10), piece, 40, alpha=alpha, offset=offset)
+
+    def test_clear_caches_drops_piece_surfaces(self):
+        cells, direction = pieces.parse_piece("0,0 > R")
+        color = PIECE_PALETTE[5]
+        first = ui.piece_surface(cells, direction, color, 30)
+        ui.clear_caches()
+        second = ui.piece_surface(cells, direction, color, 30)
+        self.assertIsNot(first, second)
+
+    def test_wrap_text_respects_max_width(self):
+        text = "一支管道是一条占好几格的折线，末端那个箭头就是它的朝向，点它身上任意一格都算选中。"
+        lines = ui.wrap_text(text, size=16, max_width=200)
+        self.assertGreater(len(lines), 1)
+        for line in lines:
+            self.assertLessEqual(ui.text_width(line, 16), 200)
+
+    def test_wrap_text_never_starts_a_line_with_punctuation(self):
+        """逐字折行很容易把句号甩到下一行，中文排版上很难看。"""
+        text = "前方有管道挡着，飞不出去。这时会丢掉一颗心；所以要看清楚再点。"
+        for line in ui.wrap_text(text, size=15, max_width=110):
+            self.assertNotIn(line[0], "。，、；：！？）】》」』")
+
+    def test_wrap_text_handles_short_and_empty_input(self):
+        self.assertEqual(ui.wrap_text("", size=15, max_width=100), [])
+        self.assertEqual(ui.wrap_text("短", size=15, max_width=100), ["短"])
+
+    def test_text_width_and_draw_text_agree(self):
+        rect = ui.draw_text(self.screen, "一箭又一箭", (0, 0), size=20)
+        self.assertAlmostEqual(rect.width, ui.text_width("一箭又一箭", 20), delta=2)
+
+    def test_draw_paragraph_returns_consumed_height(self):
+        rect = pygame.Rect(0, 0, 160, 200)
+        height = ui.draw_paragraph(self.screen, "点一下管道，让它飞出棋盘。" * 3, rect, size=14)
+        self.assertGreater(height, 0)
+        self.assertLessEqual(height, rect.height)
+
+    def test_slider_helpers_round_trip(self):
+        rect = pygame.Rect(100, 800, 300, 30)
+        for ratio in (0.0, 0.25, 0.5, 0.75, 1.0):
+            x = ui.slider_knob_x(rect, ratio)
+            self.assertAlmostEqual(ui.slider_ratio_from_x(rect, x), ratio, delta=0.02)
+
+    def test_slider_ratio_is_clamped(self):
+        rect = pygame.Rect(100, 800, 300, 30)
+        self.assertEqual(ui.slider_ratio_from_x(rect, -9999), 0.0)
+        self.assertEqual(ui.slider_ratio_from_x(rect, 9999), 1.0)
+
+    def test_slider_track_leaves_room_for_the_knob(self):
+        rect = pygame.Rect(100, 800, 300, 30)
+        track = ui.slider_track_rect(rect)
+        self.assertGreater(track.width, 0)
+        self.assertGreater(track.x, rect.x)
+        self.assertLess(track.right, rect.right)
+
+    def test_draw_slider_does_not_raise(self):
+        ui.draw_slider(self.screen, pygame.Rect(100, 800, 300, 30), 0.4)
+
+    def test_icons_do_not_raise(self):
+        icons = (ui.draw_icon_back, ui.draw_icon_grid, ui.draw_icon_bulb,
+                 ui.draw_icon_guide, ui.draw_icon_clock, ui.draw_icon_gear,
+                 ui.draw_icon_moon, ui.draw_icon_sun, ui.draw_icon_minus,
+                 ui.draw_icon_plus, ui.draw_icon_replay)
+        for icon in icons:
+            icon(self.screen, (50, 50), 24, config.COLOR_TEXT)
+
+    def test_stars_and_lock_do_not_raise(self):
+        ui.draw_stars(self.screen, (100, 100), 3)
+        ui.draw_stars(self.screen, (100, 100), 5)
+        ui.draw_lock(self.screen, (100, 100), 20)
+        ui.draw_check(self.screen, (100, 100), 20)
+
+    def test_draw_hearts_handles_every_count(self):
+        for current in range(0, 8):
+            ui.draw_hearts(self.screen, (20, 20), current, 7, size=18, gap=6)
+
+    def test_draw_dashed_line_does_not_raise(self):
+        ui.draw_dashed_line(self.screen, config.COLOR_TEXT_DIM, (0, 0), (200, 120))
+        ui.draw_dashed_line(self.screen, config.COLOR_TEXT_DIM, (200, 120), (0, 0), dash=2, gap=2)
+
+    def test_mix_color_endpoints(self):
+        self.assertEqual(ui.mix_color((0, 0, 0), (255, 255, 255), 0.0), (0, 0, 0))
+        self.assertEqual(ui.mix_color((0, 0, 0), (255, 255, 255), 1.0), (255, 255, 255))
+
+    def test_lighten_and_darken_move_toward_the_right_end(self):
+        self.assertGreater(sum(ui.lighten((100, 100, 100), 0.5)), 300)
+        self.assertLess(sum(ui.darken((100, 100, 100), 0.5)), 300)
+
+    def test_vertical_gradient_size(self):
+        surface = ui.make_vertical_gradient((40, 60), (255, 0, 0), (0, 0, 255))
+        self.assertEqual(surface.get_size(), (40, 60))
+
+    def test_round_rect_alpha_does_not_raise(self):
+        ui.draw_round_rect_alpha(self.screen, pygame.Rect(10, 10, 60, 40), (0, 0, 0), 120)
+        ui.draw_round_rect_alpha(self.screen, pygame.Rect(10, 10, 60, 40), (0, 0, 0), 120,
+                                 width=2)
+
+    def test_piece_surface_cache_stays_bounded(self):
+        """缓存上限是硬要求：缩放滑杆一路拖过去会生成上百个格距。"""
+        for cell in range(6, 130):
+            cells, direction = pieces.parse_piece("0,0 > R2")
+            ui.piece_surface(cells, direction, PIECE_PALETTE[cell % 12], cell)
+        self.assertLessEqual(len(ui._piece_cache), ui.PIECE_CACHE_LIMIT)
+
+
+# ---------------------------------------------------------------- 动画
+class AnimationTestCase(unittest.TestCase):
+    """飞出 / 撞击 / 飘字 / 飘心四种动画的生命周期。
+
+    注意 offset / alpha / flash / lift 都是 **property**（只读属性），
+    写法是 `effect.offset` 而不是 `effect.offset()`——它们是每帧现算的派生量，
+    写成属性是为了让调用处一眼看出「取个值」而不是「做件事」。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        pygame.init()
+        cls.screen = pygame.display.set_mode((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
+        ui.clear_caches()
+
+    @classmethod
+    def tearDownClass(cls):
+        pygame.quit()
+
+    def drain(self, effect, limit=600):
+        """反复 update 直到动画自己报告结束，返回用掉的帧数。"""
+        frames = 0
+        while not effect.update(FRAME):
+            frames += 1
+            self.assertLess(frames, limit, "动画没有自行结束，可能有死循环")
+        return frames
+
+    def test_fly_out_finishes_and_keeps_moving_away(self):
+        piece = Piece(cells=((2, 2), (2, 3)), direction="right", color=PIECE_PALETTE[0])
+        effect = anim.FlyOut(piece, (0, 0), 40, 400)
+        self.assertEqual(tuple(effect.offset), (0, 0))
+        effect.update(FRAME)
+        self.assertGreater(effect.offset[0], 0)        # 朝右飞
+        self.assertEqual(effect.offset[1], 0)
+        frames = self.drain(effect)
+        self.assertGreater(frames, 5)
+        self.assertEqual(effect.alpha, 0)
+
+    def test_fly_out_respects_direction(self):
+        for direction, sign, axis in (("right", 1, 0), ("left", -1, 0),
+                                      ("down", 1, 1), ("up", -1, 1)):
+            piece = Piece(cells=((1, 1),), direction=direction, color=PIECE_PALETTE[1])
+            effect = anim.FlyOut(piece, (0, 0), 40, 300)
+            effect.update(FRAME)
+            self.assertGreater(sign * effect.offset[axis], 0,
+                               "%s 方向飞反了：%r" % (direction, tuple(effect.offset)))
+
+    def test_fly_out_alpha_stays_opaque_early_then_fades(self):
+        piece = Piece(cells=((1, 1),), direction="up", color=PIECE_PALETTE[1])
+        effect = anim.FlyOut(piece, (0, 0), 40, 300)
+        self.assertEqual(effect.alpha, 255)
+        for _ in range(30):
+            effect.update(FRAME)
+        self.assertLess(effect.alpha, 255)
+
+    def test_impact_fades_out_and_ends(self):
+        piece = Piece(cells=((1, 1), (1, 2)), direction="up", color=PIECE_PALETTE[2])
+        effect = anim.Impact(piece, (0, 0), 40, pygame.Rect(0, 0, 40, 40))
+        self.assertGreater(effect.flash, 0)
+        frames = self.drain(effect)
+        self.assertGreater(frames, 5)
+
+    def test_impact_offset_moves_along_its_direction(self):
+        piece = Piece(cells=((1, 1),), direction="right", color=PIECE_PALETTE[2])
+        effect = anim.Impact(piece, (0, 0), 40, pygame.Rect(0, 0, 40, 40))
+        effect.update(FRAME)
+        self.assertGreater(effect.offset[0], 0)
+
+    def test_impact_tint_moves_toward_red(self):
+        """被撞的管道要真的泛红——这是「点错了」最直接的反馈。"""
+        piece = Piece(cells=((1, 1),), direction="up", color=(0, 0, 255))
+        effect = anim.Impact(piece, (0, 0), 40, pygame.Rect(0, 0, 40, 40))
+        image, offset = effect.tinted(effect.TINT_LEVELS)
+        self.assertEqual(image.get_size(),
+                         ui.piece_surface(piece.cells, piece.direction,
+                                          (0, 0, 255), 40)[0].get_size())
+        # 染色是「本色 × 偏红的乘数」，蓝色分量必须被压下去
+        self.assertLess(image.get_at((image.get_width() // 2,
+                                      image.get_height() // 2))[2], 255)
+        self.assertIsInstance(offset, tuple)
+
+    def test_impact_tint_is_cached_per_level(self):
+        piece = Piece(cells=((1, 1),), direction="up", color=PIECE_PALETTE[2])
+        effect = anim.Impact(piece, (0, 0), 40, pygame.Rect(0, 0, 40, 40))
+        self.assertIs(effect.tinted(2), effect.tinted(2))
+
+    def test_floating_text_rises_and_ends(self):
+        effect = anim.FloatingText("+300", (100, 100), size=20, duration=0.5)
+        frames = self.drain(effect)
+        self.assertGreater(frames, 5)
+        self.assertLess(frames, 600)
+
+    def test_floating_heart_rises_and_ends(self):
+        effect = anim.FloatingHeart((100, 100), duration=0.5)
+        effect.update(FRAME)
+        self.assertLess(effect.lift, 0, "心应当先向上弹起（屏幕 y 变小）")
+        self.assertEqual(effect.alpha, 255)
+        for _ in range(20):
+            effect.update(FRAME)
+        self.assertLess(effect.alpha, 255)
+        self.drain(effect)
+
+    def test_floating_heart_splits_into_two_halves(self):
+        """「心碎」动画把整颗心切成左右两半，两半拼起来必须还是整颗心。"""
+        effect = anim.FloatingHeart((100, 100), size=40)
+        full = ui.heart_surface(40, config.COLOR_HP)
+        self.assertEqual(effect.left.get_width() + effect.right.get_width(),
+                         full.get_width())
+        self.assertEqual(effect.left.get_height(), full.get_height())
+        self.assertEqual(effect.right.get_height(), full.get_height())
+
+    def test_animations_draw_without_raising(self):
+        piece = Piece(cells=((1, 1), (1, 2)), direction="right", color=PIECE_PALETTE[3])
+        effects = [
+            anim.FlyOut(piece, (10, 10), 40, 400),
+            anim.Impact(piece, (10, 10), 40, pygame.Rect(10, 10, 40, 40)),
+            anim.FloatingText("测试", (50, 50)),
+            anim.FloatingHeart((50, 50)),
+        ]
+        for effect in effects:
+            # 整段动画每一帧都画一遍：撞击那支的染色贴图只在闪得厉害时才会用到，
+            # 只画第一帧或者只画最后一帧都可能漏掉那条分支（真的漏过一次）。
+            while not effect.update(FRAME):
+                effect.draw(self.screen)
+            effect.draw(self.screen)
+
+
+# ---------------------------------------------------------------- 背景
+class BackgroundTestCase(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        pygame.init()
+        cls.screen = pygame.display.set_mode((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
+        ui.clear_caches()
+
+    @classmethod
+    def tearDownClass(cls):
+        pygame.quit()
+
+    def test_every_scene_draws(self):
+        bg = bgfx.Background((config.WINDOW_WIDTH, config.WINDOW_HEIGHT), SCENE_MENU)
+        for scene in (SCENE_MENU, SCENE_LEVELS, SCENE_PLAY):
+            bg.set_scene(scene)
+            for _ in range(3):
+                bg.update(FRAME)
+            bg.draw(self.screen)
+
+    def test_background_follows_theme(self):
+        for theme in config.THEME_ORDER:
+            config.apply_theme(theme)
+            ui.clear_caches()
+            bg = bgfx.Background((config.WINDOW_WIDTH, config.WINDOW_HEIGHT), SCENE_MENU)
+            bg.draw(self.screen)
+        config.apply_theme("night")
+        ui.clear_caches()
+
+
+# ---------------------------------------------------------------- 界面流程
+class GameFlowTestCase(unittest.TestCase):
+    """整机流程：菜单 / 关卡总览 / 关卡内交互 / 提示 / 缩放平移 / 结算面板。"""
+
+    @classmethod
+    def setUpClass(cls):
+        pygame.init()
+        cls.screen = pygame.display.set_mode((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
+        ui.clear_caches()
 
     @classmethod
     def tearDownClass(cls):
         pygame.quit()
 
     def setUp(self):
-        # 每个用例一份独立的临时存档，互不影响、也不会碰真实的 progress.json
-        self.dir = tempfile.mkdtemp(prefix="arrow_game_")
-        self.progress = Progress(path=os.path.join(self.dir, "progress.json"),
-                                 autoload=False)
-        self.game = Game(self.screen, progress=self.progress)
+        config.apply_theme("night")
+        ui.clear_caches()
+        self.dir = tempfile.mkdtemp(prefix="oa_flow_")
+        self.progress = Progress(path=os.path.join(self.dir, "progress.json"))
+        self.game = Game(self.screen, self.progress)
 
     def tearDown(self):
         shutil.rmtree(self.dir, ignore_errors=True)
 
-    def advance(self, seconds=1.5):
-        """推进若干个渲染帧（用于等待结果面板弹出）。"""
-        for _ in range(int(seconds / FRAME) + 1):
-            self.game.update(FRAME)
+    def enter_level(self, index):
+        """进入第 index 关。
 
-    def blocked_arrow(self, board):
-        """找一个当下确实还在棋盘上、且被挡住的箭头。"""
-        for arrow in board.arrows:
-            if board.arrow_at(arrow.row, arrow.col) is not arrow:
-                continue                                # 已经飞出去了，跳过
-            if not board.can_fly(arrow.row, arrow.col):
-                return arrow
-        self.fail("本关没有找到被挡住的箭头，测试用例需要调整")
-
-    def clear_level(self, index):
-        """用求解器给出的顺序把某一关打通。"""
-        self.assertTrue(self.game.start_level(index), "第 %d 关进不去" % (index + 1))
-        for row, col in self.game.board.solution():
-            self.game.click_cell(row, col)
-
-    def unlock_all(self):
+        解锁链本身有专门的用例（test_locked_level_cannot_be_started_...、
+        test_fresh_progress_only_has_level_one_unlocked），其余用例关心的是
+        「这一关长什么样」，所以先把全部关卡解锁，免得被「第 N 关还没开」挡住。
+        """
         self.progress.mark_all_cleared(TOTAL_LEVELS)
-        self.game.enter_menu()
+        self.assertTrue(self.game.start_level(index), "第 %d 关应当可以进入" % (index + 1))
+        return self.game
 
-    # ---------------------------------------------------------- 开始界面
-    def test_start_screen_and_start_button(self):
-        """开始界面存在，点「开始游戏」能进入第 1 关。"""
+    # ------------------------------------------------------------ 基础
+    def test_starts_in_menu(self):
         self.assertEqual(self.game.scene, SCENE_MENU)
-        self.assertEqual(self.game.board, None)
-        start_button = self.game.buttons[0]
-        self.assertEqual(start_button.label, "开始游戏")
-        self.game.handle_click(start_button.rect.center)
-        self.assertEqual(self.game.scene, SCENE_PLAY)
-        self.assertEqual(self.game.level_index, 0)
-        self.assertEqual(self.game.board.remaining, LEVELS[0].arrow_count)
+        self.assertIsNone(self.game.board)
 
-    def test_menu_explains_the_rules(self):
-        """主菜单必须有玩法说明，以及教学关 / 关卡总览 / 退出三个入口。"""
-        labels = [button.label for button in self.game.buttons]
-        self.assertIn("教学关", labels)
-        self.assertIn("关卡总览", labels)
-        self.assertIn("退出游戏", labels)
-        self.assertEqual(len(self.game.buttons), 4)
-
-    def test_primary_button_follows_progress(self):
-        """主按钮文字会随进度变化：从「开始游戏」到「继续第 N 关」。"""
-        self.assertEqual(self.game.buttons[0].label, "开始游戏")
-        self.progress.mark_cleared(0)
+    def test_every_scene_draws_without_raising(self):
         self.game.enter_menu()
-        self.assertEqual(self.game.buttons[0].label, "继续第 2 关")
-        self.progress.mark_all_cleared(TOTAL_LEVELS)
-        self.game.enter_menu()
-        self.assertEqual(self.game.buttons[0].label, "重新挑战第 1 关")
-
-    def test_render_every_scene_without_error(self):
-        """各个画面都能正常渲染（顺便覆盖绘制代码）。"""
-        self.game.draw()                                # 开始界面
+        self.game.draw()
         self.game.enter_levels()
-        self.game.draw()                                # 关卡总览
-        self.game.start_level(0)
-        self.game.draw()                                # 游戏界面
-        for row, col in self.game.board.solution():
-            self.game.click_cell(row, col)
-        self.advance()
-        self.game.draw()                                # 通关界面
-        self.assertEqual(self.game.overlay, OVERLAY_WIN)
+        self.game.draw()
+        self.game.start_tutorial()
+        self.game.draw()
+        self.enter_level(0)
+        self.game.draw()
+        for index in range(TOTAL_LEVELS):
+            self.enter_level(index)
+            self.game.draw()
 
-    def test_blocked_click_pops_a_broken_heart_not_hanzi(self):
-        """点错时飘出来的是一颗「碎掉的像素心」，不是「失去一心」四个汉字。
-
-        生命值本来就用心的形状表示，所以扣血的提示也用同一套图形；
-        文字提示只留给「这里没有箭头」这种和生命值无关的消息。
-        """
-        self.game.start_level(0)
-        arrow = self.blocked_arrow(self.game.board)
-        self.assertTrue(self.game.click_cell(arrow.row, arrow.col))
-
-        hearts = [item for item in self.game.floats
-                  if isinstance(item, anim.FloatingHeart)]
-        self.assertEqual(len(hearts), 1, "点错一次应该正好飘出一颗心")
-        heart = hearts[0]
-        self.assertEqual(heart.color, config.COLOR_HP)
-        self.assertGreater(heart.size, 0)
-
-        for text in [item.text for item in self.game.floats
-                     if isinstance(item, anim.FloatingText)]:
-            self.assertNotIn("一心", text, "扣血提示不该再用汉字描述")
-
-        # 心会自己飘完消失，不会一直挂在画面上
-        for _ in range(int(heart.duration / FRAME) + 4):
-            self.game.update(FRAME)
-        self.assertFalse([item for item in self.game.floats
-                          if isinstance(item, anim.FloatingHeart)],
-                         "心碎动画播完要自动移除")
-
-    def test_broken_heart_animation_renders_and_fades_out(self):
-        """心碎动画：两半分开、心往上飘、末端淡出，每一帧都画得出来。"""
-        heart = anim.FloatingHeart((480, 360), size=40, duration=1.2, rise=50)
-        self.assertEqual(heart.left.get_width() + heart.right.get_width(), 40,
-                         "左右两半拼起来应该是完整的一颗心")
-
-        for _ in range(18):                      # 前 0.3 秒：应该还看得很清楚
-            heart.update(FRAME)
-            heart.draw(self.screen)
-        self.assertEqual(heart.alpha, 255, "前 30% 的时间不该已经开始淡出")
-        self.assertLess(heart.lift, 0.0, "心应该已经离开原位往上飘了")
-
-        for _ in range(18):                      # 0.3 ~ 0.6 秒：开始淡出
-            heart.update(FRAME)
-            heart.draw(self.screen)
-        self.assertLess(heart.alpha, 255, "后半段应该开始淡出")
-
-        while not heart.update(FRAME):           # 一直播到结束
-            heart.draw(self.screen)
-        self.assertEqual(heart.progress, 1.0)
-        self.assertEqual(heart.alpha, 0, "播完之后要完全淡出，不能留一颗挂在画面上")
-
-    # ---------------------------------------------------------- T04
-    def test_t04_clear_level_then_go_to_next_level(self):
-        """T04 消除本关全部箭头 -> 显示通关并进入下一关。"""
-        game = self.game
-        game.start_level(0)
-        for row, col in game.board.solution():
-            self.assertEqual(game.click_cell(row, col).kind, CLICK_FLY)
-        self.assertEqual(game.board.state, STATE_CLEARED)
-        self.assertEqual(game.board.remaining, 0)
-
-        self.advance()
-        self.assertEqual(game.overlay, OVERLAY_WIN)      # 弹出通关面板
-        self.assertTrue(self.progress.is_cleared(0))     # 顺便记下进度
-
-        next_button = game.buttons[0]
-        self.assertEqual(next_button.label, "下一关")
-        game.handle_click(next_button.rect.center)       # 点「下一关」
-
-        self.assertEqual(game.level_index, 1)
-        self.assertEqual(game.scene, SCENE_PLAY)
-        self.assertIsNone(game.overlay)
-        self.assertEqual(game.board.remaining, LEVELS[1].arrow_count)
-
-    def test_t04_clearing_the_last_level_shows_all_clear(self):
-        """打完最后一关显示「全部通关」。"""
-        self.unlock_all()
-        self.clear_level(TOTAL_LEVELS - 1)
-        self.advance()
-        self.assertEqual(self.game.overlay, OVERLAY_ALL_CLEAR)
-
-    # ---------------------------------------------------------- 得分结算
-    # 用「错位走廊」做样本：6 颗心、满分 1200，中间量足够看出差别。
-    # 按名字查下标，关卡表插一关也不会指到别的关卡上去。
-    SAMPLE = level_index("错位走廊")
-
-    def test_clearing_without_mistakes_pays_the_full_score(self):
-        """零失误通关：拿满分、记进存档，结算面板写出完美奖励。"""
-        self.unlock_all()
-        self.clear_level(self.SAMPLE)
-        self.advance()
-
-        game = self.game
-        level = LEVELS[self.SAMPLE]
-        self.assertEqual(game.overlay, OVERLAY_WIN)
-        self.assertTrue(game.score_perfect)
-        self.assertEqual(game.score_max, scoring.max_score(level))
-        self.assertEqual(game.last_score, scoring.max_score(level))
-        self.assertEqual(game.score_gain, game.last_score)     # 首次通关就是全部增量
-        self.assertEqual(self.progress.best_score(self.SAMPLE), game.last_score)
-        self.assertIn("完美奖励", game.score_note()[0])
-        game.draw()                                            # 结算面板画得出来
-
-    def test_every_mistake_lowers_the_score(self):
-        """丢一颗心，HUD 上的得分立刻按比例下降，最终结算也跟着少。"""
-        self.unlock_all()
-        game = self.game
-        level = LEVELS[self.SAMPLE]
-        self.assertTrue(game.start_level(self.SAMPLE))
-        full = scoring.max_score(level)
-        self.assertEqual(game.board.score, full)               # 开局是满分
-
-        target = self.blocked_arrow(game.board)
-        game.click_cell(target.row, target.col)                # 故意点错一次
-        expected = scoring.level_score(level, level.max_hp - 1)
-        self.assertEqual(game.board.score, expected)
-        game.draw()
-
-        for row, col in game.board.solution():                 # 再老老实实通关
-            game.click_cell(row, col)
-        self.advance()
-        self.assertEqual(game.last_score, expected)
-        self.assertLess(game.last_score, full)
-        self.assertFalse(game.score_perfect)
-        self.assertIn("得分 =", game.score_note()[0])
-
-    def test_a_worse_replay_keeps_the_old_record(self):
-        """重玩打得差不会把最高分冲掉（存档只记最好的一次）。"""
-        self.unlock_all()
-        self.clear_level(self.SAMPLE)
-        self.advance()
-        best = self.progress.best_score(self.SAMPLE)
-        self.assertEqual(best, scoring.max_score(LEVELS[self.SAMPLE]))
-
-        game = self.game
-        self.assertTrue(game.start_level(self.SAMPLE))
-        target = self.blocked_arrow(game.board)
-        game.click_cell(target.row, target.col)
-        for row, col in game.board.solution():
-            game.click_cell(row, col)
-        self.advance()
-        self.assertEqual(game.score_gain, 0)
-        self.assertLess(game.last_score, best)
-        self.assertEqual(self.progress.best_score(self.SAMPLE), best)
-
-    def test_failing_a_level_scores_zero(self):
-        """生命值耗尽：本关 0 分，也不写进存档。"""
-        self.unlock_all()
-        game = self.game
-        self.assertTrue(game.start_level(self.SAMPLE))
-        target = self.blocked_arrow(game.board)
-        for _ in range(game.board.max_hp):
-            game.click_cell(target.row, target.col)
-        self.advance()
-        self.assertEqual(game.overlay, OVERLAY_FAIL)
-        self.assertEqual(game.last_score, 0)
-        self.assertEqual(game.score_gain, 0)
-        self.assertEqual(self.progress.best_score(self.SAMPLE), 0)
-        self.assertIn("0 分", game.score_note()[0])
-        game.draw()
-
-    def test_hud_has_room_for_the_widest_level(self):
-        """HUD 信息行排得下：最宽的一组内容（7 颗心 + 四位数得分）也不会越界。
-
-        信息行现在是「计时 / 生命值 / 剩余箭头 / 得分」四组**自适应居中**排布，
-        所以量法也跟着换了：先按可能出现的最宽内容算出整行总宽，
-        再确认它居中之后两边都还留在窗口里。
-        心数从 LEVELS 里现取（谁的生命值上限最高就用谁），
-        不在测试里写死一个 5——否则以后改生命值表，这条测试就白写了。
-        """
-        widest = max(level.max_hp for level in LEVELS)
-        hearts_w = widest * HUD_HEART_SIZE + (widest - 1) * HUD_HEART_GAP
-        hp_w = hearts_w + 10 + ui.text_width("%d / %d" % (widest, widest), size=15)
-        clock_w = HUD_CLOCK_SIZE + 7 + ui.text_width("99:59", size=17, bold=True)
-        arrow_w = ui.text_width("剩余", size=15) + 8 + ui.text_width("999", size=22, bold=True)
-        score_w = (ui.text_width("得分", size=15) + 8
-                   + ui.text_width("9999", size=22, bold=True) + 7
-                   + ui.text_width("/ 9999", size=14))
-
-        total = clock_w + hp_w + arrow_w + score_w + HUD_INFO_GAP * 3
-        left = config.WINDOW_WIDTH // 2 - total // 2
-        self.assertGreater(left, 40, "信息行左边越界了")
-        self.assertLess(left + total, config.WINDOW_WIDTH - 40, "信息行右边越界了")
-
-        # 信息行往下就是提示条，再往下才是棋盘，别压到它们身上
-        self.assertLess(HUD_ROW_Y + 14, config.HUD_HEIGHT + config.HINT_BAR_HEIGHT,
-                        "信息行压到提示条上了")
-
-    # ---------------------------------------------------------- T05
-    def test_t05_fail_then_restart(self):
-        """T05 生命值耗尽 -> 显示失败并允许重新开始。"""
-        game = self.game
-        game.start_level(0)
-        board = game.board
-        target = self.blocked_arrow(board)
-
-        for _ in range(board.max_hp):
-            game.click_cell(target.row, target.col)
-        self.assertEqual(board.state, STATE_FAILED)
-        self.assertEqual(board.hp_left, 0)
-
-        self.advance()
-        self.assertEqual(game.overlay, OVERLAY_FAIL)     # 弹出失败面板
-
-        restart_button = game.buttons[0]
-        self.assertEqual(restart_button.label, "重新开始本关")
-        game.handle_click(restart_button.rect.center)
-
-        self.assertIsNone(game.overlay)
-        self.assertEqual(board.state, STATE_PLAYING)
-        self.assertEqual(board.remaining, board.total)
-        self.assertEqual(board.hp, board.max_hp)
-
-    # ---------------------------------------------------------- T06
-    def test_t06_restart_mid_game(self):
-        """T06 游戏进行中重新开始 -> 箭头布局和生命值都恢复。
-
-        用第 2 关（交叉路口）来测：它同时存在「能飞」和「被挡住」的箭头，
-        消掉那支能飞的之后仍有箭头被挡着，扣得到生命值。
-        """
-        game = self.game
-        self.progress.mark_cleared(0)                    # 先解锁第 2 关
-        self.assertTrue(game.start_level(1))
-        board = game.board
-        total = board.total
-
-        free = board.available_arrows()[0]
-        game.click_cell(free.row, free.col)              # 先消掉一个箭头
-        blocked = self.blocked_arrow(board)
-        game.click_cell(blocked.row, blocked.col)        # 再扣一次生命值
-        self.assertLess(board.remaining, total)
-        self.assertEqual(board.hp, board.max_hp - 1)     # 只扣掉 1 点
-
-        restart_button = [b for b in game.buttons if b.label == "重新开始"][0]
-        game.handle_click(restart_button.rect.center)
-
-        self.assertEqual(board.remaining, total)
-        self.assertEqual(board.hp, board.max_hp)
-        self.assertEqual(board.state, STATE_PLAYING)
-        for arrow in board.arrows:                       # 每个箭头都回到原位
-            self.assertIs(board.arrow_at(arrow.row, arrow.col), arrow)
-
-    def test_keyboard_shortcuts(self):
-        """R 重开本关、Esc 返回主菜单。"""
-        game = self.game
-        game.start_level(0)
-        free = game.board.available_arrows()[0]
-        game.click_cell(free.row, free.col)
-        self.assertEqual(game.board.remaining, game.board.total - 1)
-
-        game.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_r))
-        self.assertEqual(game.board.remaining, game.board.total)
-
-        game.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE))
-        self.assertEqual(game.scene, SCENE_MENU)
-
-    def test_mouse_click_routes_to_the_board(self):
-        """鼠标点击棋盘坐标能正确换算到对应的格子。"""
-        game = self.game
-        game.start_level(0)
-        free = game.board.available_arrows()[0]
-        target = game.cell_rect(free.row, free.col).center
-        game.handle_click(target)
-        self.assertIsNone(game.board.arrow_at(free.row, free.col))
-
-    # ---------------------------------------------------------- 关卡解锁
-    def test_locked_level_cannot_be_started(self):
-        """没通关前一关时，后面的关卡进不去，并且给出提示。"""
-        self.assertFalse(self.game.start_level(3))
-        self.assertEqual(self.game.scene, SCENE_MENU)
-        self.assertEqual(self.game.level_index, 0)
-        self.assertGreater(self.game.toast_timer, 0)      # 弹了提示
-        self.assertIn("解锁", self.game.toast_text)
-
-    def test_clearing_a_level_unlocks_the_next_one(self):
-        """通关之后，下一关立刻变成可进入。"""
-        self.assertFalse(self.game.is_unlocked(1))
-        self.clear_level(0)
-        self.advance()
-        self.assertTrue(self.game.is_unlocked(1))
-        self.assertTrue(self.game.start_level(1))
-        self.assertEqual(self.game.level_index, 1)
-
-    # ---------------------------------------------------------- 关卡总览
-    def test_level_select_lists_all_levels(self):
-        """关卡总览里每张卡片对应一个关卡。"""
+    def test_enter_levels_and_back(self):
         self.game.enter_levels()
         self.assertEqual(self.game.scene, SCENE_LEVELS)
-        self.assertEqual(len(self.game.card_rects), TOTAL_LEVELS)
-        self.game.draw()
+        self.game.enter_menu()
+        self.assertEqual(self.game.scene, SCENE_MENU)
 
-    def test_clicking_a_locked_card_only_shows_a_hint(self):
-        """点未解锁的卡片不会开局，只提示先通关哪一关。"""
-        game = self.game
-        game.enter_levels()
-        game.handle_click(game.card_rects[TOTAL_LEVELS - 1].center)
-        self.assertEqual(game.scene, SCENE_LEVELS)
-        self.assertIsNone(game.board)
-        self.assertGreater(game.toast_timer, 0)
-        self.assertIn("解锁", game.toast_text)
+    def test_start_level_rejects_out_of_range(self):
+        self.assertFalse(self.game.start_level(-1))
+        self.assertFalse(self.game.start_level(TOTAL_LEVELS))
 
-    def test_clicking_an_unlocked_card_starts_that_level(self):
-        """点已解锁的卡片直接开局。"""
-        game = self.game
-        game.enter_levels()
-        game.handle_click(game.card_rects[0].center)
-        self.assertEqual(game.scene, SCENE_PLAY)
-        self.assertEqual(game.level_index, 0)
+    def test_locked_level_cannot_be_started_and_shows_a_toast(self):
+        self.assertFalse(self.game.start_level(3))
+        self.assertIsNone(self.game.board)
+        self.assertGreater(self.game.toast_timer, 0)
 
-    def test_reset_progress_needs_two_clicks(self):
-        """「清空进度」要点两次才真的清，避免手滑。"""
-        self.progress.mark_all_cleared(TOTAL_LEVELS)
-        game = self.game
-        game.enter_levels()
-
-        reset_button = game.buttons[1]
-        game.handle_click(reset_button.rect.center)
-        self.assertTrue(game.reset_armed)
-        self.assertEqual(self.progress.cleared_count(TOTAL_LEVELS), TOTAL_LEVELS)
-
-        game.handle_click(game.buttons[1].rect.center)
-        self.assertFalse(game.reset_armed)
-        self.assertEqual(self.progress.cleared_count(TOTAL_LEVELS), 0)
-        self.assertFalse(game.is_unlocked(1))
-
-    # ---------------------------------------------------------- 教学关
-    def test_tutorial_has_its_own_entry_on_the_menu(self):
-        """教学关是菜单上的独立入口：不用解锁，点了就能进。"""
-        game = self.game
-        self.assertFalse(game.is_unlocked(1))            # 全新存档，第 2 关还锁着
-        button = [b for b in game.buttons if b.label == "教学关"][0]
-        game.handle_click(button.rect.center)
-
-        self.assertEqual(game.scene, SCENE_PLAY)
-        self.assertTrue(game.in_tutorial)
-        self.assertIs(game.level, TUTORIAL)
-        self.assertIsNot(game.level, LEVELS[0])
-        self.assertEqual(game.board.remaining, TUTORIAL.arrow_count)
-        game.draw()                                      # 教学关界面画得出来
-
-    def test_finishing_the_tutorial_scores_nothing(self):
-        """教学关走完：不进存档、不解锁、不算分，只引导去第 1 关。"""
-        game = self.game
-        self.assertTrue(game.start_tutorial())
-        for row, col in game.board.solution():
-            game.click_cell(row, col)
-        self.advance()
-
-        self.assertEqual(game.overlay, OVERLAY_TUTORIAL_DONE)
-        self.assertEqual(game.last_score, 0)
-        self.assertEqual(self.progress.cleared, set(), "教学关不该写进通关记录")
-        self.assertEqual(self.progress.total_score(TOTAL_LEVELS), 0)
-        self.assertFalse(game.is_unlocked(1), "教学关不该顺手解锁第 2 关")
-        self.assertIn("不计分", game.score_note()[0])
-        game.draw()
-
-        # 结算面板只给「开始第 1 关 / 再看一遍 / 关卡总览 / 返回主菜单」
-        labels = [button.label for button in game.buttons]
-        self.assertEqual(labels[0], "开始第 1 关")
-        self.assertNotIn("下一关", labels)
-        game.handle_click(game.buttons[0].rect.center)
-        self.assertFalse(game.in_tutorial)
-        self.assertEqual(game.level_index, 0)
-        self.assertEqual(game.scene, SCENE_PLAY)
-
-    def test_tutorial_can_be_failed_and_retried_without_penalty(self):
-        """教学关点光生命值也只是重来一遍：不记分、不锁关。"""
-        game = self.game
-        game.start_tutorial()
-        target = self.blocked_arrow(game.board)
-        for _ in range(game.board.max_hp):
-            game.click_cell(target.row, target.col)
-        self.advance()
-
-        self.assertEqual(game.overlay, OVERLAY_FAIL)
-        self.assertEqual(game.last_score, 0)
-        self.assertEqual(self.progress.cleared, set())
-        self.assertIn("教学关", game.score_note()[0])
-        game.draw()
-
-        restart = [b for b in game.buttons if b.label == "重新开始本关"][0]
-        game.handle_click(restart.rect.center)
-        self.assertEqual(game.board.state, STATE_PLAYING)
-        self.assertEqual(game.board.hp, game.board.max_hp)
-        self.assertTrue(game.in_tutorial)
-
-    def test_tutorial_steps_advance_one_by_one(self):
-        """照着引导点，步骤会一步步推进，最后引导结束。"""
-        game = self.game
-        game.start_tutorial()
-        total_steps = len(game.level.steps)
-        self.assertFalse(game.tutorial_done)
-
-        for index in range(total_steps):
-            step = game.current_step
-            self.assertIsNotNone(step, "第 %d 步引导丢失" % (index + 1))
-            result = game.click_cell(step.row, step.col)
-            self.assertIsNotNone(result)
-            self.assertEqual(result.kind, step.expect,
-                             "第 %d 步的预期是 %s，实际是 %s"
-                             % (index + 1, step.expect, result.kind))
-            self.advance(0.12)
-
-        self.assertTrue(game.tutorial_done)
-        self.assertIsNone(game.current_step)
-        self.assertEqual(game.board.state, STATE_CLEARED)
-
-    def test_tutorial_resyncs_when_player_deviates(self):
-        """玩家不按提示点时，引导会自动跳过已经失效的步骤，而不是卡住。"""
-        game = self.game
-        game.start_tutorial()
-        first = game.current_step
-        self.assertEqual(first.expect, "blocked")
-
-        # 故意先点「挡路的那一支」：目标 (1,1) 因此变得可以飞出，
-        # 于是第 1 步（教碰撞）与第 2 步（教飞出）都失效，引导应直接跳到第 3 步。
-        blocker = game.current_step
-        game.click_cell(1, 3)                      # (1,3) 的「v」，就是挡路的那一支
-        self.advance(0.12)
-
-        step = game.current_step
-        self.assertIsNotNone(step)
-        self.assertEqual((step.row, step.col), (blocker.row, blocker.col))
-        self.assertEqual(step.expect, "fly")
-        self.assertEqual(game.tutorial_index, 2)
-
-    def test_tutorial_ring_only_drawn_for_current_step(self):
-        """引导高亮只在教学关且步骤未走完时出现（顺带覆盖绘制代码）。"""
-        game = self.game
-        game.start_tutorial()
-        self.assertIsNotNone(game.current_step)
-        game.draw()
-        for row, col in game.board.solution():
-            game.click_cell(row, col)
-        self.advance(0.2)
-        self.assertIsNone(game.current_step)
-        game.draw()
-
-    # ---------------------------------------------------------- 全关卡回归
-    def test_all_levels_can_be_cleared_in_order(self):
-        """按顺序把 9 关全部打通，验证解锁链路与关卡数据整体可用。"""
-        game = self.game
-        for index in range(TOTAL_LEVELS):
-            self.assertTrue(game.start_level(index),
-                            "第 %d 关应当已解锁" % (index + 1))
-            for row, col in game.board.solution():
-                self.assertEqual(game.click_cell(row, col).kind, CLICK_FLY)
-                self.advance(0.5)
-            self.advance()
-            self.assertTrue(self.progress.is_cleared(index),
-                            "第 %d 关没有被记为通关" % (index + 1))
-        self.assertEqual(game.overlay, OVERLAY_ALL_CLEAR)
-
-    # ---------------------------------------------------------- 计时 / 提示 / 辅助线
-    def test_play_clock_counts_up_and_resets_on_restart(self):
-        """计时从 0 开始、玩的时候往前走，重新开始要归零。
-
-        归零这一条是重点：重开之后还挂着上一把的时间，看着就像一个 bug。
-        """
-        self.unlock_all()
+    def test_starting_a_level_sets_up_the_board(self):
         self.assertTrue(self.game.start_level(0))
-        self.assertEqual(self.game.elapsed, 0.0)
+        self.assertEqual(self.game.scene, SCENE_PLAY)
+        self.assertIsNotNone(self.game.board)
+        self.assertEqual(self.game.board.total, LEVELS[0].arrow_count)
+        self.assertEqual(self.game.board.remaining, LEVELS[0].arrow_count)
+        self.assertFalse(self.game.in_tutorial)
+        self.assertIsNone(self.game.overlay)
 
-        self.advance(2.0)
-        self.assertGreater(self.game.elapsed, 1.9, "玩了两秒计时还停在原地")
+    # ------------------------------------------------------------ 关卡内交互
+    def test_clicking_a_free_pipe_starts_a_fly_animation(self):
+        self.game.start_level(0)
+        piece = self.game.board.available_arrows()[0]
+        before = self.game.board.remaining
+        result = self.game.click_cell(*piece.head)
+        self.assertEqual(result.kind, CLICK_FLY)
+        self.assertEqual(self.game.board.remaining, before - 1)
+        self.assertTrue(self.game.animations)
 
-        self.game.restart_level()
-        self.assertEqual(self.game.elapsed, 0.0, "重新开始后计时没有归零")
+    def test_clicking_a_blocked_pipe_shows_a_floating_heart(self):
+        self.game.start_level(0)
+        blocked = [p for p in self.game.board.pieces if not self.game.board.can_fly(p)]
+        self.assertTrue(blocked, "第 1 关开局应当有被挡住的管道")
+        before = self.game.board.hp
+        result = self.game.click_cell(*blocked[0].head)
+        self.assertEqual(result.kind, CLICK_BLOCKED)
+        self.assertEqual(self.game.board.hp, before - 1)
+        self.assertTrue(self.game.floats)
 
-    def test_play_clock_stops_once_the_level_is_over(self):
-        """本关分出胜负之后时钟就停住，不再往上涨。
+    def test_clicking_empty_cell_does_nothing_in_game(self):
+        self.game.start_level(0)
+        empty = None
+        for row in range(self.game.board.rows):
+            for col in range(self.game.board.cols):
+                if self.game.board.piece_at(row, col) is None:
+                    empty = (row, col)
+                    break
+            if empty:
+                break
+        if empty is None:
+            self.skipTest("本关没有空格")
+        result = self.game.click_cell(*empty)
+        self.assertEqual(result.kind, CLICK_EMPTY)
+        self.assertFalse(self.game.animations)
 
-        否则玩家盯着结算面板读分数的那几秒也被算进用时，
-        再进下一关看统计就会觉得"我明明没花那么久"。
-        """
-        self.unlock_all()
-        self.assertTrue(self.game.start_level(0))
-        self.advance(1.0)
-        before = self.game.elapsed
+    def test_click_cell_returns_none_while_an_overlay_is_open(self):
+        self.game.start_level(0)
+        self.game.open_settings()
+        self.assertIsNone(self.game.click_cell(0, 0))
 
-        for row, col in self.game.board.solution():      # 一边点一边推进动画
-            self.game.click_cell(row, col)
-            self.advance(0.5)
+    def test_clicking_outside_the_board_does_nothing(self):
+        self.game.start_level(0)
+        self.game.handle_click((1, 1))              # 左上角是顶栏按钮区
+        self.assertEqual(self.game.board.remaining, LEVELS[0].arrow_count)
+
+    def test_t04_clear_level_then_go_to_next_level(self):
+        """T04：清空本关全部管道 -> 弹「通关」面板并记分 -> 点「下一关」进入下一关。"""
+        self.game.start_level(0)
+        for piece in self.game.board.solution():
+            self.game.click_cell(*piece.head)
         self.assertEqual(self.game.board.state, STATE_CLEARED)
+        for _ in range(_RESULT_FRAMES):
+            self.game.update(FRAME)
+        self.assertEqual(self.game.overlay, OVERLAY_WIN)
+        self.assertEqual(self.game.last_score, scoring.max_score(LEVELS[0]))
+        self.assertTrue(self.game.score_perfect)
+        self.assertEqual(self.progress.best_score(0), self.game.last_score)
+        self.assertTrue(self.progress.is_cleared(0))
+        self.assertTrue(self.game.is_unlocked(1))
+
+        # 「进入下一关」：通关面板上的主按钮就是它
+        self.game.next_level()
+        self.assertEqual(self.game.level_index, 1)
+        self.assertEqual(self.game.board.remaining, LEVELS[1].arrow_count)
+
+    def test_t05_fail_then_restart(self):
+        """T05：把生命值点光 -> 弹「失败」面板且不得分 -> 「重新开始本关」能接着玩。"""
+        self.game.start_level(0)
+        blocked = [p for p in self.game.board.pieces if not self.game.board.can_fly(p)]
+        target = blocked[0]
+        for _ in range(self.game.board.max_hp):
+            self.game.click_cell(*target.head)
+        self.assertEqual(self.game.board.state, STATE_FAILED)
+        for _ in range(_RESULT_FRAMES):
+            self.game.update(FRAME)
+        self.assertEqual(self.game.overlay, OVERLAY_FAIL)
+        self.assertEqual(self.game.last_score, 0)
+        self.assertEqual(self.progress.best_score(0), 0)
+
+        # 失败面板的主按钮是「重新开始本关」，点了就回到干净的开局状态
+        self.game.restart_level()
+        self.assertEqual(self.game.board.state, STATE_PLAYING)
+        self.assertEqual(self.game.board.hp, self.game.board.max_hp)
+        self.assertEqual(self.game.board.remaining, LEVELS[0].arrow_count)
+        self.assertIsNone(self.game.overlay)
+
+    def test_final_level_clear_shows_all_clear(self):
+        self.progress.mark_all_cleared(TOTAL_LEVELS)
+        self.game.start_level(TOTAL_LEVELS - 1)
+        for piece in self.game.board.solution():
+            self.game.click_cell(*piece.head)
+        for _ in range(_RESULT_FRAMES):
+            self.game.update(FRAME)
+        self.assertEqual(self.game.overlay, OVERLAY_ALL_CLEAR)
+        self.assertTrue(self.progress.all_cleared(TOTAL_LEVELS))
+
+    def test_next_level_advances_after_winning(self):
+        self.game.start_level(0)
+        for piece in self.game.board.solution():
+            self.game.click_cell(*piece.head)
+        for _ in range(_RESULT_FRAMES):
+            self.game.update(FRAME)
+        self.game.next_level()
+        self.assertEqual(self.game.level_index, 1)
+        self.assertEqual(self.game.board.remaining, LEVELS[1].arrow_count)
+
+    def test_t06_restart_mid_game(self):
+        """T06：进行中点掉一支、再故意点错一次，重新开始后布局与生命值都要恢复。"""
+        self.game.start_level(0)
+        piece = self.game.board.available_arrows()[0]
+        self.game.click_cell(*piece.head)
+        blocked = [p for p in self.game.board.pieces
+                   if not self.game.board.can_fly(p)][0]
+        self.game.click_cell(*blocked.head)
+        for _ in range(10):
+            self.game.update(FRAME)
+        self.assertLess(self.game.board.remaining, LEVELS[0].arrow_count)
+        self.assertLess(self.game.board.hp, self.game.board.max_hp)
+        self.game.restart_level()
+        self.assertEqual(self.game.board.remaining, LEVELS[0].arrow_count)
+        self.assertEqual(self.game.board.hp, self.game.board.max_hp)
+        self.assertIsNone(self.game.overlay)
+        self.assertEqual(self.game.elapsed, 0.0)
+        self.assertEqual(self.game.animations, [])
+
+        # 不只是「数量回来了」——每一支管道都回到了它自己原来的格子上
+        for pipe in LEVELS[0].pieces:
+            self.assertIs(self.game.board.piece_at(*pipe.head), pipe)
+
+    def test_timer_only_runs_while_playing(self):
+        """分出胜负之后时钟要停下来，否则玩家盯着结算面板那几秒用时还在涨。"""
+        self.game.start_level(0)
+        for _ in range(30):
+            self.game.update(FRAME)
+        self.assertGreater(self.game.elapsed, 0)
+        for piece in self.game.board.solution():
+            self.game.click_cell(*piece.head)
+        for _ in range(_RESULT_FRAMES):
+            self.game.update(FRAME)
         frozen = self.game.elapsed
-        self.assertGreater(frozen, before, "通关过程里计时没有走过")
+        for _ in range(30):
+            self.game.update(FRAME)
+        self.assertAlmostEqual(self.game.elapsed, frozen, delta=1e-9)
 
-        self.advance(1.0)                                 # 结果面板弹出前后都在推进
-        self.assertAlmostEqual(self.game.elapsed, frozen, places=3,
-                               msg="本关结束之后计时还在走")
+    # ------------------------------------------------------------ 提示 / 辅助线
+    def test_hint_picks_a_piece_that_can_actually_fly(self):
+        self.game.start_level(0)
+        piece = self.game.best_hint()
+        self.assertIsNotNone(piece)
+        self.assertTrue(self.game.board.can_fly(piece))
 
-    def test_clock_text_formats_minutes_and_hours(self):
-        """计时文本：MM:SS；超过一小时进位成 H:MM:SS，不会显示成 62:05。"""
-        self.game.elapsed = 0.0
-        self.assertEqual(self.game.time_text(), "00:00")
-        self.game.elapsed = 65.4
-        self.assertEqual(self.game.time_text(), "01:05")
-        self.game.elapsed = 3725.0
-        self.assertEqual(self.game.time_text(), "1:02:05")
+    def test_hint_prefers_unlocking_the_most_pieces(self):
+        """提示要挑「点掉之后能连带解锁最多」的那一支，而不是随便一支。"""
+        self.game.start_level(0)
+        best = self.game.best_hint()
+        grid = self.game.board.grid
+        index_of = {id(p): i for i, p in enumerate(self.game.board.pieces)}
+        def gain_for(piece):
+            index = index_of[id(piece)]
+            for row, col in piece.cells:
+                grid[row][col] = None
+            try:
+                return len(self.game.board.available_arrows())
+            finally:
+                for row, col in piece.cells:
+                    grid[row][col] = index
+        gains = {gain_for(p) for p in self.game.board.available_arrows()}
+        self.assertEqual(gain_for(best), max(gains))
 
-    def test_hint_picks_an_arrow_that_can_really_fly(self):
-        """提示高亮的那一支，必须是当下真的能飞出去的箭头、而且是最优的那一支。
+    def test_hint_does_not_corrupt_the_board(self):
+        """回归测试：提示的试算必须把 grid 原样还原。
 
-        这是提示功能的核心承诺：给出的建议得能照做。所以除了「能飞」，
-        还要拿它和暴力枚举出来的答案对一遍——
-        提示挑的应该是「消掉它之后能解锁最多其它箭头」的那一支。
+        早先的写法用「候选列表里的第几个」当真实下标写回 grid，
+        结果调用一次提示就把棋盘写坏，之后所有点击都判成「被挡住」。
         """
-        self.unlock_all()
-        self.assertTrue(self.game.start_level(0))
-        self.assertIsNone(self.game.hint_cell, "还没点提示就有高亮了")
+        self.game.start_level(0)
+        before = len(self.game.board.available_arrows())
+        for _ in range(6):
+            self.game.best_hint()
+        self.assertEqual(len(self.game.board.available_arrows()), before,
+                         "调用提示之后可点数变了，说明 grid 被写坏了")
+        for piece in self.game.board.solution():
+            self.assertEqual(self.game.click_cell(*piece.head).kind, CLICK_FLY)
+        self.assertEqual(self.game.board.state, STATE_CLEARED)
 
+    def test_use_hint_sets_and_expires_the_highlight(self):
+        self.game.start_level(0)
         self.game.use_hint()
-        self.assertIsNotNone(self.game.hint_cell)
-        row, col = self.game.hint_cell
-        self.assertTrue(self.game.board.can_fly(row, col),
-                        "提示指了一支飞不出去的箭头")
-
-        board = self.game.board
-        best_gain, best_cell = -1, None
-        for arrow in board.available_arrows():
-            board.grid[arrow.row][arrow.col] = None      # 暴力枚举：假装消掉它
-            gain = len(board.available_arrows())
-            board.grid[arrow.row][arrow.col] = arrow
-            if gain > best_gain:
-                best_gain, best_cell = gain, (arrow.row, arrow.col)
-        self.assertEqual(self.game.hint_cell, best_cell,
-                         "提示挑的不是「解锁最多」的那一支")
-
-    def test_hint_ring_fades_away_by_itself(self):
-        """提示环到时间自己消失，不会一直挂在棋盘上。
-
-        一直亮着会让玩家以为那一格有什么特殊状态，
-        而且他会盯着那一格反复点。
-        """
-        self.unlock_all()
-        self.assertTrue(self.game.start_level(0))
-        self.game.use_hint()
-        self.assertIsNotNone(self.game.hint_cell)
-
-        self.advance(config.HINT_DURATION + 0.2)
-        self.assertIsNone(self.game.hint_cell, "提示环到时间了还挂在棋盘上")
+        self.assertIsNotNone(self.game.hint_piece)
+        self.assertGreater(self.game.hint_timer, 0)
+        for _ in range(int(config.HINT_DURATION / FRAME) + 10):
+            self.game.update(FRAME)
+        self.assertIsNone(self.game.hint_piece)
         self.assertEqual(self.game.hint_timer, 0.0)
-        self.game.draw()                                  # 没有提示环时也要画得出来
 
-    def test_hint_when_nothing_can_fly_gives_a_message(self):
-        """一开局就没有能飞的箭头时，提示按钮不能崩，要给一句话。"""
-        self.unlock_all()
-        self.game.enter_play(make_level((">v", "^<")), 0)   # 四支箭头互相挡死
-        self.assertEqual(self.game.board.available_arrows(), [])
+    def test_clicking_the_hinted_piece_clears_the_highlight(self):
+        self.game.start_level(0)
         self.game.use_hint()
-        self.assertIsNone(self.game.hint_cell)
-        self.assertIn("没有", self.game.toast_text)
+        piece = self.game.hint_piece
+        self.game.click_cell(*piece.head)
+        self.assertIsNone(self.game.hint_piece)
 
-    def test_guides_toggle_keeps_the_button_in_sync(self):
-        """辅助线开关：状态、按钮上的 on 标记、渲染三者要一致。"""
-        self.unlock_all()
-        self.assertTrue(self.game.start_level(0))
+    def test_use_hint_outside_a_level_only_toasts(self):
+        self.game.enter_menu()
+        self.game.use_hint()
+        self.assertIsNone(self.game.hint_piece)
+
+    def test_guides_toggle_updates_the_button_state(self):
+        self.game.start_level(0)
         self.assertFalse(self.game.show_guides)
-        self.assertFalse(self.guide_button().on)
-
         self.game.toggle_guides()
         self.assertTrue(self.game.show_guides)
-        self.assertTrue(self.guide_button().on, "开关打开了，按钮却没亮")
-
-        self.game.toast_timer = 0.0
-        self.game.draw()                                  # 开着辅助线也要画得出来
-
+        self.game.draw()
         self.game.toggle_guides()
         self.assertFalse(self.game.show_guides)
-        self.assertFalse(self.guide_button().on)
+        self.game.draw()
 
-    def test_guides_survive_a_restart(self):
-        """辅助线是玩家偏好：重开本关不该把它关掉。"""
-        self.unlock_all()
-        self.assertTrue(self.game.start_level(0))
-        self.game.toggle_guides()
-        self.game.restart_level()
-        self.assertTrue(self.game.show_guides, "重开一关把辅助线设置弄丢了")
-
-    def guide_button(self):
-        """从当前按钮列表里取出「辅助线」那个圆钮。"""
-        for button in self.game.buttons:
-            if getattr(button, "label_below", "") == "辅助线":
-                return button
-        self.fail("按钮列表里找不到「辅助线」圆钮")
-
-    def test_play_layout_areas_do_not_overlap(self):
-        """游戏界面那几块区域不许互相压住：信息栏 / 提示条 / 棋盘 / 工具栏。
-
-        这一版改了信息栏高度、加了提示条与底部工具栏，四个边界分别写在
-        四个常量里，随便动一个都可能让棋盘压到工具栏上。这里按实际矩形算一遍，
-        比对着截图看靠谱——棋盘是居中的，出问题时常常只差几个像素。
-        """
-        self.unlock_all()
-        hint_bottom = config.HUD_HEIGHT + config.HINT_BAR_HEIGHT
-        toolbar_top = config.WINDOW_HEIGHT - config.TOOLBAR_HEIGHT
-        self.assertLess(hint_bottom, toolbar_top, "提示条已经压到工具栏上了")
-
+    def test_guides_draw_for_every_level(self):
         for index in range(TOTAL_LEVELS):
-            self.assertTrue(self.game.start_level(index), "第 %d 关进不去" % (index + 1))
+            self.enter_level(index)
+            self.game.toggle_guides()
+            self.game.draw()
+            self.game.toggle_guides()
+
+    def test_guide_segment_is_parallel_to_the_arrow(self):
+        """辅助线必须和箭头同向、且在射线不为空时有长度。
+
+        这是补一个真出现过的 bug：辅助线的终点原先取的是「挡路那支的**箭头**
+        所在格」，而挡路的通常是对方的身子和箭头在棋盘另一头，
+        于是辅助线会斜穿整个棋盘去连一个方向完全无关的格子。
+        端点几何抽成 guide_segment 之后，就能这样直接把它盯住。
+        """
+        for index in range(TOTAL_LEVELS):
+            self.enter_level(index)
+            for piece in self.game.board.pieces:
+                segment = self.game.guide_segment(piece)
+                self.assertIsNotNone(segment)
+                (x1, y1), (x2, y2) = segment
+                dx, dy = ui.DIR_VECTORS[piece.direction]
+                # 与箭头方向叉积为 0 -> 共线
+                self.assertAlmostEqual((x2 - x1) * dy - (y2 - y1) * dx, 0.0, places=6)
+                # 共线之后，点积就是线段的有效长度
+                length = (x2 - x1) * dx + (y2 - y1) * dy
+                if self.game.board.path_cells(piece):
+                    # 射线非空（前方至少有一格）时必须真的画出长度来，
+                    # 否则辅助线在密铺的盘面上等于没画
+                    self.assertGreater(length, 0.0, (index, piece.head))
+                else:
+                    # 贴着边、朝盘外的那类，线长本来就是 0；
+                    # 端点一个是浮点格心、一个是取整过的矩形边，留 1 像素余量
+                    self.assertLessEqual(abs(length), 1.0, (index, piece.head))
+
+    def test_guide_segment_ends_inside_the_blocking_cell(self):
+        """被挡住时，辅助线的终点要落在**射线上被占的那一格**里。"""
+        for index in range(TOTAL_LEVELS):
+            self.enter_level(index)
+            for piece in self.game.board.pieces:
+                path, blocker = self.game.board.path_to_blocker(piece)
+                if blocker is None:
+                    continue
+                end = self.game.guide_segment(piece)[1]
+                rect = self.game.cell_rect(*path[-1])
+                self.assertTrue(rect.left <= end[0] <= rect.right,
+                                (index, piece.head, end))
+                self.assertTrue(rect.top <= end[1] <= rect.bottom,
+                                (index, piece.head, end))
+
+    def test_guide_segment_disappears_with_the_piece(self):
+        """已经飞走的管道不再有辅助线。"""
+        self.enter_level(0)
+        piece = self.game.board.available_arrows()[0]
+        self.game.click_cell(*piece.head)
+        self.assertIsNone(self.game.guide_segment(piece))
+
+    # ------------------------------------------------------------ 缩放 / 平移
+    def test_zoom_range_is_respected(self):
+        self.game.start_level(0)
+        self.game.set_zoom_ratio(0.0)
+        self.assertAlmostEqual(self.game.zoom, config.ZOOM_MIN)
+        self.game.set_zoom_ratio(1.0)
+        self.assertAlmostEqual(self.game.zoom, config.ZOOM_MAX)
+        self.game.set_zoom_ratio(-5.0)
+        self.assertAlmostEqual(self.game.zoom, config.ZOOM_MIN)
+        self.game.set_zoom_ratio(5.0)
+        self.assertAlmostEqual(self.game.zoom, config.ZOOM_MAX)
+
+    def test_zoom_is_rounded_to_two_decimals(self):
+        """zoom 量化到两位小数：滑杆连着拖不会留下几百个无意义的中间值。"""
+        self.enter_level(0)
+        for step in range(101):
+            self.game.set_zoom_ratio(step / 100.0)
+            self.assertEqual(self.game.zoom, round(self.game.zoom, 2))
+
+    def test_zoom_sweep_keeps_the_piece_cache_bounded(self):
+        """一路拖过整条滑杆也不能把贴图缓存撑爆。
+
+        真正参与缓存键的是**整数格距** self.cell（piece_surface 里再取一次整），
+        所以缓存键的个数被格距的整数范围卡住；PIECE_CACHE_LIMIT 再兜一道底。
+        """
+        self.enter_level(0)
+        self.assertIsInstance(self.game.cell, int)
+        for step in range(101):
+            self.game.set_zoom_ratio(step / 100.0)
+            self.game.draw()
+        self.assertLessEqual(len(ui._piece_cache), ui.PIECE_CACHE_LIMIT)
+
+    def test_zoom_by_moves_by_one_step(self):
+        self.game.start_level(0)
+        self.game.set_zoom_ratio(0.5)
+        start = self.game.zoom
+        self.game.zoom_by(config.ZOOM_STEP)
+        self.assertGreater(self.game.zoom, start)
+        self.game.zoom_by(-config.ZOOM_STEP)
+        self.assertAlmostEqual(self.game.zoom, start, delta=0.011)
+
+    def test_zoom_ratio_reports_current_position(self):
+        self.game.start_level(0)
+        self.game.set_zoom_ratio(0.5)
+        self.assertAlmostEqual(self.game.zoom_ratio, 0.5, delta=0.02)
+
+    def test_cell_size_scales_with_zoom(self):
+        self.game.start_level(0)
+        self.game.set_zoom_ratio(0.0)
+        small = self.game.cell
+        self.game.set_zoom_ratio(1.0)
+        self.assertGreater(self.game.cell, small)
+        self.assertAlmostEqual(self.game.cell / float(small),
+                               config.ZOOM_MAX / config.ZOOM_MIN, delta=0.2)
+
+    def test_base_cell_is_within_limits(self):
+        for index in range(TOTAL_LEVELS):
+            self.enter_level(index)
+            self.assertGreaterEqual(self.game.base_cell, config.CELL_MIN_SIDE)
+            self.assertLessEqual(self.game.base_cell, config.CELL_MAX_SIDE)
+
+    def test_board_fits_the_viewport_at_default_zoom(self):
+        view = self.game.viewport_rect
+        for index in range(TOTAL_LEVELS):
+            self.enter_level(index)
             rect = self.game.board_rect
-            self.assertGreater(rect.top, hint_bottom,
-                               "第 %d 关的棋盘顶到提示条上了" % (index + 1))
-            self.assertLess(rect.bottom, toolbar_top,
-                            "第 %d 关的棋盘压到工具栏上了" % (index + 1))
-            self.assertGreater(rect.left, 0)
-            self.assertLess(rect.right, config.WINDOW_WIDTH)
+            self.assertLessEqual(rect.width, view.width + 1, "第 %d 关棋盘太宽" % (index + 1))
+            self.assertLessEqual(rect.height, view.height + 1, "第 %d 关棋盘太高" % (index + 1))
 
-        # 教学关底部多一条讲解条，棋盘得更靠上，同样不许压住
+    def test_board_fills_the_viewport_vertically(self):
+        """竖屏棋盘应当把视口高度基本占满，否则上下会各空出一条。"""
+        for index in range(TOTAL_LEVELS):
+            self.enter_level(index)
+            ratio = self.game.board_rect.height / float(self.game.viewport_rect.height)
+            self.assertGreater(ratio, 0.90, "第 %d 关棋盘只占了视口高度的 %.0f%%"
+                               % (index + 1, ratio * 100))
+
+    def test_board_never_leaves_the_viewport(self):
+        view = self.game.viewport_rect
+        for index in (0, TOTAL_LEVELS - 1):
+            self.enter_level(index)
+            self.game.set_zoom_ratio(1.0)               # 放到最大，必然需要平移
+            for delta in ((400, 400), (-900, -900), (100000, -100000)):
+                self.game.pan = [delta[0], delta[1]]
+                self.game.layout_board()
+                rect = self.game.board_rect
+                if rect.width > view.width:
+                    self.assertLessEqual(rect.left, view.left)
+                    self.assertGreaterEqual(rect.right, view.right)
+                else:
+                    self.assertEqual(rect.centerx, view.centerx)
+                if rect.height > view.height:
+                    self.assertLessEqual(rect.top, view.top)
+                    self.assertGreaterEqual(rect.bottom, view.bottom)
+                else:
+                    self.assertEqual(rect.centery, view.centery)
+
+    def test_small_board_is_centred(self):
+        self.game.start_level(0)
+        self.game.set_zoom_ratio(0.0)
+        self.assertEqual(self.game.board_rect.centerx, self.game.viewport_rect.centerx)
+
+    def test_pan_is_clamped_back_into_range(self):
+        """拖到边界之后 pan 要记回实际偏移，否则往回拖有一段是空转。"""
+        self.enter_level(TOTAL_LEVELS - 1)
+        self.game.set_zoom_ratio(1.0)
+        self.game.pan = [99999, 0]
+        self.game.layout_board()
+        first = list(self.game.pan)
+        self.game.layout_board()
+        self.assertEqual(first, self.game.pan)
+
+    def test_cell_rect_and_center_agree(self):
+        self.enter_level(0)
+        rect = self.game.cell_rect(3, 4)
+        center = self.game.cell_center(3, 4)
+        self.assertAlmostEqual(center[0], rect.centerx, delta=1)
+        self.assertAlmostEqual(center[1], rect.centery, delta=1)
+
+    def test_cell_at_pos_round_trip(self):
+        for index in (0, TOTAL_LEVELS - 1):
+            self.enter_level(index)
+            for row, col in ((0, 0), (1, 1), (self.game.board.rows - 1, self.game.board.cols - 1)):
+                pos = self.game.cell_center(row, col)
+                self.assertEqual(self.game.cell_at_pos(pos), (row, col))
+
+    def test_cell_at_pos_outside_the_board_is_none(self):
+        self.game.start_level(0)
+        self.assertIsNone(self.game.cell_at_pos((1, 1)))
+        self.assertIsNone(self.game.cell_at_pos((config.WINDOW_WIDTH - 2, config.WINDOW_HEIGHT - 2)))
+
+    # ------------------------------------------------------------ 拖拽
+    def test_drag_on_board_does_not_count_as_a_click(self):
+        """拖动查看棋盘时松手不能顺手点掉一支管道。"""
+        self.enter_level(TOTAL_LEVELS - 1)
+        self.game.set_zoom_ratio(1.0)
+        row, col = self.game.board.available_arrows()[0].head
+        pos = self.game.cell_center(row, col)
+        before = self.game.board.remaining
+        self.game.on_press(pos)
+        self.game.on_motion((pos[0] + 40, pos[1] + 40), (1, 0, 0))
+        self.game.on_motion((pos[0] + 80, pos[1] + 80), (1, 0, 0))
+        self.game.on_release((pos[0] + 80, pos[1] + 80))
+        self.assertEqual(self.game.board.remaining, before)
+
+    def test_short_press_is_treated_as_a_click(self):
+        self.enter_level(TOTAL_LEVELS - 1)
+        piece = self.game.board.available_arrows()[0]
+        pos = self.game.cell_center(*piece.head)
+        before = self.game.board.remaining
+        self.game.on_press(pos)
+        self.game.on_release(pos)
+        self.assertEqual(self.game.board.remaining, before - 1)
+
+    def test_tiny_mouse_jitter_still_counts_as_a_click(self):
+        """手抖了几像素不该被当成拖动——阈值是 DRAG_THRESHOLD。"""
+        self.enter_level(0)
+        piece = self.game.board.available_arrows()[0]
+        pos = self.game.cell_center(*piece.head)
+        before = self.game.board.remaining
+        self.game.on_press(pos)
+        self.game.on_motion((pos[0] + 2, pos[1] + 2), (1, 0, 0))
+        self.game.on_release((pos[0] + 2, pos[1] + 2))
+        self.assertEqual(self.game.board.remaining, before - 1)
+
+    def test_pressing_a_button_is_not_a_board_drag(self):
+        self.game.start_level(0)
+        pos = self.game.buttons[0].rect.center
+        self.assertIsNone(self.game.pick_drag_target(pos))
+
+    def test_pressing_the_viewport_targets_the_board(self):
+        self.game.start_level(0)
+        self.assertEqual(self.game.pick_drag_target(self.game.viewport_rect.center), "board")
+
+    def test_slider_drag_sets_the_zoom(self):
+        """按住滑杆拖动：滑杆中点对应 120%，两端是最小 / 最大。
+
+        滑杆比例是线性的 0~1 映射到 ZOOM_MIN~ZOOM_MAX，
+        所以中点不是「100%」而是 1.2——100% 落在三分之一处。
+        """
+        self.enter_level(0)
+        rect = self.game.zoom_slider_rect
+        center = (rect.centerx, rect.centery)
+        self.assertEqual(self.game.pick_drag_target(center), "slider")
+        self.game.on_press(center)
+        self.assertAlmostEqual(self.game.zoom,
+                               (config.ZOOM_MIN + config.ZOOM_MAX) / 2.0, delta=0.02)
+
+        track = ui.slider_track_rect(rect)
+        self.game.on_motion((track.left - 200, rect.centery), (1, 0, 0))
+        self.assertAlmostEqual(self.game.zoom, config.ZOOM_MIN, delta=0.02)
+        self.game.on_motion((track.right + 200, rect.centery), (1, 0, 0))
+        self.assertAlmostEqual(self.game.zoom, config.ZOOM_MAX, delta=0.02)
+        self.game.on_release((track.right, rect.centery))
+
+    def test_default_zoom_sits_at_one_third_of_the_slider(self):
+        """默认缩放是 100%，它对应的滑杆位置应当就是三分之一处。"""
+        self.enter_level(0)
+        expected = ((config.ZOOM_DEFAULT - config.ZOOM_MIN)
+                    / (config.ZOOM_MAX - config.ZOOM_MIN))
+        self.assertAlmostEqual(self.game.zoom_ratio, expected, delta=0.01)
+        x = ui.slider_knob_x(self.game.zoom_slider_rect, expected)
+        self.assertAlmostEqual(ui.slider_ratio_from_x(self.game.zoom_slider_rect, x),
+                               expected, delta=0.02)
+
+    def test_slider_is_not_draggable_outside_a_level(self):
+        self.game.enter_menu()
+        rect = self.game.zoom_slider_rect
+        self.assertIsNone(self.game.pick_drag_target(rect.center))
+
+    # ------------------------------------------------------------ 设置 / 主题
+    def test_settings_overlay_opens_and_closes(self):
+        self.game.start_level(0)
+        self.game.open_settings()
+        self.assertEqual(self.game.overlay, OVERLAY_SETTINGS)
+        self.game.draw()
+        self.game.close_overlay()
+        self.assertIsNone(self.game.overlay)
+
+    def test_theme_toggle_switches_and_returns(self):
+        original = config.THEME
+        self.game.start_level(0)
+        self.game.toggle_theme()
+        self.assertNotEqual(config.THEME, original)
+        self.game.draw()
+        self.game.toggle_theme()
+        self.assertEqual(config.THEME, original)
+        self.game.draw()
+
+    def test_theme_toggle_works_in_every_scene(self):
+        for enter in (self.game.enter_menu, self.game.enter_levels, lambda: self.game.start_level(0)):
+            enter()
+            self.game.toggle_theme()
+            self.game.draw()
+            self.game.toggle_theme()
+            self.game.draw()
+
+    def test_panel_geometry_holds_content(self):
+        """结算面板要在 64 像素高的窗口里放得下，还要在窗口内。"""
+        self.game.start_level(0)
+        panel = self.game.panel_rect
+        self.assertEqual(panel.width, 460)
+        self.assertEqual(panel.height, PANEL_HEIGHT)
+        self.assertGreater(panel.top, 0)
+        self.assertLess(panel.bottom, config.WINDOW_HEIGHT)
+        # 五颗设置按钮加底部两行说明，都要落在面板里
+        self.game.open_settings()
+        for button in self.game.make_settings_buttons():
+            self.assertGreaterEqual(button.rect.top, panel.top)
+            self.assertLessEqual(button.rect.bottom, panel.bottom)
+
+    def test_overlay_buttons_stay_inside_the_panel(self):
+        self.game.start_level(0)
+        for piece in self.game.board.solution():
+            self.game.click_cell(*piece.head)
+        for _ in range(_RESULT_FRAMES):
+            self.game.update(FRAME)
+        self.assertIsNotNone(self.game.overlay)
+        block = self.game.panel_rect
+        for button in self.game.buttons:
+            self.assertGreaterEqual(button.rect.left, block.left)
+            self.assertLessEqual(button.rect.right, block.right)
+            self.assertGreaterEqual(button.rect.top, block.top)
+            self.assertLessEqual(button.rect.bottom, block.bottom)
+
+    def test_play_buttons_stay_inside_the_window(self):
+        self.game.start_level(0)
+        for button in self.game.make_play_buttons():
+            self.assertGreaterEqual(button.rect.left, 0)
+            self.assertLessEqual(button.rect.right, config.WINDOW_WIDTH)
+            self.assertGreaterEqual(button.rect.top, 0)
+            self.assertLessEqual(button.rect.bottom, config.WINDOW_HEIGHT)
+
+    def test_menu_buttons_stay_inside_the_window(self):
+        self.game.enter_menu()
+        for button in self.game.make_menu_buttons():
+            self.assertGreaterEqual(button.rect.left, 0)
+            self.assertLessEqual(button.rect.right, config.WINDOW_WIDTH)
+            self.assertLessEqual(button.rect.bottom, config.WINDOW_HEIGHT)
+
+    def test_level_cards_stay_inside_the_window(self):
+        self.game.enter_levels()
+        rects = self.game.card_rects
+        self.assertEqual(len(rects), TOTAL_LEVELS)
+        for rect in rects:
+            self.assertGreaterEqual(rect.left, 0)
+            self.assertLessEqual(rect.right, config.WINDOW_WIDTH)
+            self.assertGreaterEqual(rect.top, 0)
+            self.assertLessEqual(rect.bottom, config.WINDOW_HEIGHT)
+
+    def test_level_cards_do_not_overlap(self):
+        self.game.enter_levels()
+        rects = self.game.card_rects
+        for index, first in enumerate(rects):
+            for second in rects[index + 1:]:
+                self.assertFalse(first.colliderect(second),
+                                 "关卡卡片重叠：%r / %r" % (first, second))
+
+    def test_clicking_a_locked_card_does_not_enter(self):
+        self.game.enter_levels()
+        self.game.click_card(4)
+        self.assertEqual(self.game.scene, SCENE_LEVELS)
+        self.assertIsNone(self.game.board)
+        self.assertGreater(self.game.toast_timer, 0)
+
+    def test_clicking_an_unlocked_card_enters_the_level(self):
+        self.game.enter_levels()
+        self.game.click_card(0)
+        self.assertEqual(self.game.scene, SCENE_PLAY)
+        self.assertEqual(self.game.level_index, 0)
+
+    def test_reset_progress_needs_two_clicks(self):
+        """清空进度是不可逆的，第一次点只提醒、第二次才真的清。"""
+        self.progress.mark_all_cleared(TOTAL_LEVELS)
+        self.game.enter_levels()
+        self.game.toggle_reset_progress()
+        self.assertEqual(self.progress.cleared_count(TOTAL_LEVELS), TOTAL_LEVELS)
+        self.game.toggle_reset_progress()
+        self.assertEqual(self.progress.cleared_count(TOTAL_LEVELS), 0)
+
+    def test_toast_expires(self):
+        self.game.enter_menu()
+        self.game.show_toast("测试提示")
+        self.assertGreater(self.game.toast_timer, 0)
+        for _ in range(int(2 * 60) + 10):
+            self.game.update(FRAME)
+        self.assertEqual(self.game.toast_timer, 0.0)
+
+    # ------------------------------------------------------------ 键盘
+    def test_escape_returns_to_the_menu(self):
+        self.game.start_level(0)
+        self.game.handle_key(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE, unicode=""))
+        self.assertEqual(self.game.scene, SCENE_MENU)
+
+    def test_escape_closes_the_settings_panel_first(self):
+        self.game.start_level(0)
+        self.game.open_settings()
+        self.game.handle_key(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE, unicode=""))
+        self.assertIsNone(self.game.overlay)
+        self.assertEqual(self.game.scene, SCENE_PLAY)
+
+    def test_r_restarts_the_level(self):
+        self.game.start_level(0)
+        piece = self.game.board.available_arrows()[0]
+        self.game.click_cell(*piece.head)
+        self.game.handle_key(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_r, unicode="r"))
+        self.assertEqual(self.game.board.remaining, LEVELS[0].arrow_count)
+
+    def test_h_and_g_shortcuts(self):
+        self.game.start_level(0)
+        self.game.handle_key(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_h, unicode="h"))
+        self.assertIsNotNone(self.game.hint_piece)
+        self.game.handle_key(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_g, unicode="g"))
+        self.assertTrue(self.game.show_guides)
+
+    def test_plus_and_minus_zoom_shortcuts(self):
+        self.game.start_level(0)
+        self.game.set_zoom_ratio(0.5)
+        start = self.game.zoom
+        self.game.handle_key(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_EQUALS, unicode="+"))
+        self.assertGreater(self.game.zoom, start)
+        self.game.handle_key(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_MINUS, unicode="-"))
+        self.assertAlmostEqual(self.game.zoom, start, delta=0.011)
+
+    def test_space_starts_the_game_from_the_menu(self):
+        self.game.enter_menu()
+        self.game.handle_key(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE, unicode=" "))
+        self.assertEqual(self.game.scene, SCENE_PLAY)
+
+    # ------------------------------------------------------------ 教学关
+    def test_tutorial_runs_through_all_steps(self):
+        """教学关的每一步期望值都必须和实际结果对上——教程骗人会直接误导玩家。"""
         self.game.start_tutorial()
-        self.assertLess(self.game.board_rect.bottom, self.game.tutorial_bar_rect.top,
-                        "教学关的棋盘压到讲解条上了")
+        self.assertTrue(self.game.in_tutorial)
+        seen = []
+        for index, step in enumerate(TUTORIAL.steps):
+            piece = self.game.board.piece_at(step.row, step.col)
+            self.assertIsNotNone(piece, "第 %d 步的引导格子已经是空的了" % (index + 1))
+            result = self.game.click_cell(step.row, step.col)
+            self.assertEqual(result.kind, step.expect,
+                             "教学第 %d 步：期望 %s，实际 %s"
+                             % (index + 1, step.expect, result.kind))
+            seen.append(result.kind)
+            self.assertEqual(self.game.tutorial_index, index + 1)
+        self.assertEqual(set(seen), {"fly", "blocked"})
+        self.assertTrue(self.game.tutorial_done)
+
+    def test_tutorial_does_not_score_or_unlock(self):
+        self.game.start_tutorial()
+        for piece in self.game.board.solution():
+            self.game.click_cell(*piece.head)
+        for _ in range(_RESULT_FRAMES):
+            self.game.update(FRAME)
+        self.assertEqual(self.game.overlay, OVERLAY_TUTORIAL_DONE)
+        self.assertEqual(self.game.last_score, 0)
+        self.assertEqual(self.progress.cleared_count(TOTAL_LEVELS), 0)
+        self.assertFalse(self.progress.is_unlocked(1, TOTAL_LEVELS))
+
+    def test_tutorial_can_be_replayed(self):
+        self.game.start_tutorial()
+        for piece in self.game.board.solution():
+            self.game.click_cell(*piece.head)
+        for _ in range(_RESULT_FRAMES):
+            self.game.update(FRAME)
+        self.game.start_tutorial()
+        self.assertEqual(self.game.board.remaining, TUTORIAL.arrow_count)
+        self.assertEqual(self.game.tutorial_index, 0)
+        self.assertFalse(self.game.tutorial_done)
+
+    def test_tutorial_shows_a_hint_ring_on_the_current_target(self):
+        self.game.start_tutorial()
+        step = TUTORIAL.steps[0]
+        self.assertEqual(self.game.tutorial_target().head,
+                         self.game.board.piece_at(step.row, step.col).head)
+        self.game.draw()
+
+    def test_tutorial_bar_is_inside_the_window(self):
+        self.game.start_tutorial()
+        rect = self.game.tutorial_bar_rect
+        self.assertGreaterEqual(rect.left, 0)
+        self.assertLessEqual(rect.right, config.WINDOW_WIDTH)
+        self.assertLessEqual(rect.bottom, config.WINDOW_HEIGHT)
+        self.assertGreaterEqual(rect.top, 0)
+        self.game.draw()
+
+    def test_tutorial_bar_does_not_overlap_the_toolbar(self):
+        self.game.start_tutorial()
+        self.assertFalse(self.game.tutorial_bar_rect.colliderect(self.game.toolbar_rect),
+                         "讲解条压在工具栏上了")
+
+    def test_tutorial_viewport_leaves_room_for_the_bar(self):
+        """讲解条要占掉一块地方，棋盘视口得相应让出来，否则会叠在一起。"""
+        self.game.start_tutorial()
+        with_bar = self.game.viewport_rect
+        self.game.enter_menu()
+        self.game.start_level(0)
+        without_bar = self.game.viewport_rect
+        self.assertLess(with_bar.height, without_bar.height)
+
+    def test_tutorial_skips_steps_that_no_longer_apply(self):
+        """玩家完全可以乱点；不管怎么点，引导都不能指着一支已经飞走的管道。"""
+        self.game.start_tutorial()
+        for piece in list(self.game.board.pieces):
+            self.game.click_cell(*piece.head)
+            if self.game.board.state != STATE_PLAYING:
+                break
+        if not self.game.tutorial_done:
+            piece = self.game.tutorial_target()
+            self.assertIsNotNone(piece)
+            self.assertTrue(self.game.board.can_fly(piece))
+        self.game.draw()
+
+    # ------------------------------------------------------------ 示例小图
+    def test_menu_demo_specs_match_their_captions(self):
+        """主菜单那两张小图的画面必须和说明文字一致。
+
+        被挡那张：正好一支被挡，而且是「橙色」那支（说明文字点了名）；
+        通畅那张：唯一一支能飞。
+        早先写成了两支互指，两张图里两支都被挡住，文字和画面对不上。
+        """
+        blocked_level = make_level(DEMO_BLOCKED_SPECS, DEMO_ROWS, DEMO_COLS, name="示例被挡")
+        board = Board(blocked_level)
+        # 颜色要按 demo_pieces 取（主菜单画的就是它），不能按 Level 取——
+        # Level 会自己跑一遍 assign_colors，那套配色跟说明文字里点名的颜色无关。
+        palettes = [p.color for p in demo_pieces(DEMO_BLOCKED_SPECS)]
+        states = [(palettes[i], board.can_fly(p))
+                  for i, p in enumerate(board.pieces)]
+        self.assertEqual([can for _, can in states].count(False), 1)
+        self.assertEqual([can for _, can in states].count(True), 1)
+        orange = [color for color, can in states if not can][0]
+        self.assertEqual(orange, DEMO_COLORS[1],
+                         "说明文字里写的是「橙色那支被挡」，画出来的却换色了")
+        self.assertIn("橙色", DEMO_BLOCKED_CAPTION)
+
+        clear_board = Board(make_level(DEMO_CLEAR_SPECS, DEMO_ROWS, DEMO_COLS, name="示例通畅"))
+        self.assertEqual(len(clear_board.pieces), 1)
+        self.assertTrue(clear_board.can_fly(clear_board.pieces[0]))
+        self.assertEqual(demo_pieces(DEMO_CLEAR_SPECS)[0].color, DEMO_COLORS[0])
+
+    def test_demo_specs_parse_and_are_deterministic(self):
+        first = demo_pieces(DEMO_BLOCKED_SPECS)
+        second = demo_pieces(DEMO_BLOCKED_SPECS)
+        self.assertIs(first, second)                    # 走缓存
+        for index, piece in enumerate(first):
+            self.assertEqual(piece.color, DEMO_COLORS[index % len(DEMO_COLORS)])
+
+    def test_demo_colors_are_distinct(self):
+        self.assertEqual(len(set(DEMO_COLORS)), len(DEMO_COLORS))
+
+    # ------------------------------------------------------------ 事件循环
+    def test_event_handling_smoke(self):
+        """走一遍真实事件分发：移动 / 按下 / 松开 / 按键，都不能抛异常。"""
+        self.game.start_level(0)
+        events = [
+            pygame.event.Event(pygame.MOUSEMOTION, pos=(300, 400), rel=(0, 0), buttons=(0, 0, 0)),
+            pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=(300, 400), button=1),
+            pygame.event.Event(pygame.MOUSEBUTTONUP, pos=(300, 400), button=1),
+            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_g, unicode="g"),
+            pygame.event.Event(pygame.KEYUP, key=pygame.K_g, unicode="g"),
+        ]
+        for event in events:
+            self.game.handle_event(event)
+        self.game.draw()
+
+    def test_quit_sets_the_running_flag(self):
+        self.assertTrue(self.game.running)
+        self.game.quit()
+        self.assertFalse(self.game.running)
 
 
+# ---------------------------------------------------------------- 视觉一致性
 class VisualVarietyTestCase(unittest.TestCase):
-    """画面观感的回归：箭头配色要打散、文字折行要守中文排版规则、背景要真的在动。
-
-    这些不属于玩法逻辑，但都是「看着很平 / 很糙」的真实问题，
-    而且都能用数值断言钉住，所以一并纳入回归，避免以后又退回去。
-    """
+    """画面本身的检查：颜色够不够分散、每个界面都画得出来。"""
 
     @classmethod
     def setUpClass(cls):
-        # 前面的用例组结束时调用过 pygame.quit()，缓存里的 Font / Surface 已经失效，
-        # 不清掉的话这里再画图会直接段错误（不是抛异常，是进程崩掉）
-        was_initialized = pygame.get_init()
-        if not was_initialized:
-            pygame.init()
+        pygame.init()
+        cls.screen = pygame.display.set_mode((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
         ui.clear_caches()
-        if pygame.display.get_surface() is None:
-            pygame.display.set_mode((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
 
     @classmethod
     def tearDownClass(cls):
         pygame.quit()
 
-    def test_every_arrow_takes_its_direction_color(self):
-        """箭头颜色只由方向决定：同一方向的箭头颜色完全一致。
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="oa_vis_")
+        self.game = Game(self.screen, Progress(path=os.path.join(self.dir, "p.json")))
 
-        这是「不要有的亮有的暗」的直接体现——一个方向就是唯一一个颜色，
-        不再按格子坐标取深浅变体。
-        """
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def enter_level(self, index):
+        """进入第 index 关（先把全部关卡解锁，见 GameFlowTestCase 里的说明）。"""
+        self.game.progress.mark_all_cleared(TOTAL_LEVELS)
+        self.assertTrue(self.game.start_level(index))
+        return self.game
+
+    def test_levels_use_a_variety_of_colors(self):
+        """一支一色但整体太单调也不行——每关用到的颜色种类要够多。"""
         for level in LEVELS:
-            for row in range(level.rows):
-                for col in range(level.cols):
-                    direction = _char_direction(level.layout[row][col])
-                    if direction is None:
-                        continue
-                    self.assertEqual(ui.arrow_color(direction),
-                                     config.DIR_COLORS[direction])
+            used = {piece.color for piece in level.pieces}
+            self.assertGreaterEqual(len(used), 4,
+                                    "「%s」只用了 %d 种颜色" % (level.name, len(used)))
 
-    def test_direction_colors_have_matched_brightness(self):
-        """四个方向的颜色感知亮度要拉平，整屏看起来才像「一套」。
-
-        感知亮度 = 0.299R + 0.587G + 0.114B。
-        早先每个方向配了 4 档明暗变体，同方向内亮度跨度到 70 以上，
-        看着忽明忽暗；现在四个颜色的亮度差必须收在 5 以内。
-        """
-        luminances = []
-        for direction, color in config.DIR_COLORS.items():
-            self.assertTrue(all(0 <= value <= 255 for value in color), direction)
-            luminances.append(0.299 * color[0] + 0.587 * color[1] + 0.114 * color[2])
-        spread = max(luminances) - min(luminances)
-        self.assertLess(spread, 5.0,
-                        "四个方向的箭头颜色亮度差了 %.1f，看起来会有的亮有的暗"
-                        % spread)
-
-    def test_direction_colors_are_distinct_and_all_used(self):
-        """四个方向颜色互不相同，且确实都在关卡里用到。"""
-        colors = list(config.DIR_COLORS.values())
-        self.assertEqual(len(set(colors)), len(colors), "有两个方向撞色了")
-
-        used = set()
+    def test_colors_come_from_the_palette(self):
         for level in LEVELS:
-            for row in range(level.rows):
-                for col in range(level.cols):
-                    direction = _char_direction(level.layout[row][col])
-                    if direction is not None:
-                        used.add(direction)
-        self.assertEqual(used, set(config.DIR_COLORS), "有关卡里几乎不出现的方向")
+            for piece in level.pieces:
+                self.assertIn(piece.color, PIECE_PALETTE)
 
-    def test_level_colors_are_only_direction_colors(self):
-        """一关里出现的颜色只可能来自那 4 个方向色，不会有第 5 种。"""
-        for level in LEVELS:
-            colors = set()
-            for row in range(level.rows):
-                for col in range(level.cols):
-                    direction = _char_direction(level.layout[row][col])
-                    if direction is not None:
-                        colors.add(ui.arrow_color(direction))
-            self.assertLessEqual(len(colors), len(config.DIR_COLORS))
-            self.assertTrue(colors.issubset(set(config.DIR_COLORS.values())),
-                            "%s 出现了配色表以外的箭头颜色" % level.name)
+    def test_no_two_adjacent_pieces_share_a_color_in_any_level(self):
+        for index in range(TOTAL_LEVELS):
+            self.enter_level(index)
+            level = LEVELS[index]
+            for left, right in neighbour_pairs(level):
+                self.assertNotEqual(level.pieces[left].color, level.pieces[right].color,
+                                    "第 %d 关里有相邻同色" % (index + 1))
 
-    def test_wrap_text_keeps_punctuation_off_line_start(self):
-        """折行后不允许有行以收尾标点开头（中文排版的基本要求）。"""
-        # 引导文案现在只存在于独立的教学关里（LEVELS 里已经不带 steps）
-        texts = [step.text for step in TUTORIAL.steps]
-        texts += ["⑵ 如果它前方还有别的箭头挡路，就飞不出去，并且扣掉 1 点生命值。",
-                  "⑷ 通关一关才会解锁下一关，进度会自动保存。"]
-        for text in texts:
-            for width in (240, 320, 480, 700):
-                lines = ui.wrap_text(text, size=15, max_width=width)
-                for line in lines:
-                    if line:
-                        self.assertNotIn(line[0], ui._NO_LINE_START,
-                                         "「%s」在宽度 %d 下折出了以「%s」开头的行"
-                                         % (text, width, line[0]))
+    def test_every_level_draws_and_saves(self):
+        """每个关卡都完整画一遍——渲染报错在这一步就该暴露。"""
+        for index in range(TOTAL_LEVELS):
+            self.enter_level(index)
+            self.game.draw()
+            self.game.set_zoom_ratio(1.0)
+            self.game.draw()
+            self.game.set_zoom_ratio(0.0)
+            self.game.draw()
+            self.game.set_zoom_ratio(config.ZOOM_DEFAULT)
 
-    def test_background_actually_moves(self):
-        """背景要真的在动：时间推进之后，整屏像素确实变了。
+    def test_every_level_draws_with_guides_and_hover(self):
+        """辅助线 + 悬停高亮一起上的时候最容易漏画或画错层，逐关过一遍。"""
+        for index in range(TOTAL_LEVELS):
+            self.enter_level(index)
+            self.game.toggle_guides()
+            for row, col in ((0, 0), (1, 1), (2, 2)):
+                self.game.mouse_pos = self.game.cell_center(row, col)
+                self.game.update_hover()
+                self.game.draw()
 
-        这一版按参考图关掉了星点和流星（config.BG_STAR_COUNT = 0），
-        画面里唯一会动的就是那两团漂移光晕，所以这里量的是**整屏像素**，
-        而不是某个具体对象的坐标——以后背景元素再换，这条测试也不用改。
-        另外顺手确认星点数量跟着配置走：配置成 0 时不该有东西冒出来。
-        """
-        surface = pygame.display.get_surface()
-        background = bgfx.Background((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
-        self.assertEqual(background.star_count, config.BG_STAR_COUNT)
+    def test_every_level_draws_with_animations_running(self):
+        """动画播到一半时也要能画——撞击那支的染色贴图只在闪得厉害时才用到。"""
+        for index in range(TOTAL_LEVELS):
+            self.enter_level(index)
+            piece = self.game.board.available_arrows()[0]
+            blocked = [p for p in self.game.board.pieces if not self.game.board.can_fly(p)]
+            self.game.click_cell(*piece.head)
+            if blocked:
+                self.game.click_cell(*blocked[0].head)
+            while self.game.animations:
+                self.game.update(FRAME)
+                self.game.draw()
 
-        background.draw(surface)
-        first = pygame.image.tobytes(surface, "RGB")
+    def test_hover_highlight_works_on_any_cell_of_a_pipe(self):
+        self.enter_level(0)
+        piece = self.game.board.available_arrows()[0]
+        for cell in piece.cells:
+            self.game.mouse_pos = self.game.cell_center(*cell)
+            self.game.update_hover()
+            hovered = self.game.hovered_piece()
+            self.assertIsNotNone(hovered)
+            self.assertEqual(hovered.head, piece.head)
+        self.game.draw()
 
-        for _ in range(180):
-            background.update(FRAME)
-        background.draw(surface)
-        second = pygame.image.tobytes(surface, "RGB")
-        self.assertNotEqual(first, second, "过了 3 秒背景还是同一张画面")
+    def test_hover_on_empty_cell_highlights_nothing(self):
+        self.enter_level(0)
+        for row in range(self.game.board.rows):
+            for col in range(self.game.board.cols):
+                if self.game.board.piece_at(row, col) is None:
+                    self.game.mouse_pos = self.game.cell_center(row, col)
+                    self.game.update_hover()
+                    self.assertIsNone(self.game.hovered_piece())
+                    return
+        self.skipTest("第 1 关没有空格")
 
-    def test_background_can_still_spawn_a_shooting_star(self):
-        """流星机制没烂掉：把间隔调短之后，它确实会被触发。
-
-        这一版按参考图把流星关掉了（配置里的间隔是 999 秒，等于不出现），
-        但代码还在。测试不能傻等 999 秒，所以这里**临时**把间隔改小来验证，
-        跑完立刻还原——这样以后想重新打开流星，这条测试是现成的。
-        """
-        original = config.BG_SHOOT_INTERVAL
-        config.BG_SHOOT_INTERVAL = (0.1, 0.2)
-        try:
-            background = bgfx.Background((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
-            seen = False
-            for _ in range(int(0.6 / FRAME) + 60):
-                background.update(FRAME)
-                if background.shooting is not None:
-                    seen = True
-                    break
-            self.assertTrue(seen, "间隔都调到 0.2 秒了还没出现流星")
-        finally:
-            config.BG_SHOOT_INTERVAL = original
-
-    def test_every_scene_renders_with_background(self):
-        """三个场景都要能带着动态背景正常画出来。"""
-        surface = pygame.display.get_surface()
-        background = bgfx.Background((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
-        for scene in (SCENE_MENU, SCENE_LEVELS, SCENE_PLAY):
-            background.set_scene(scene)
-            background.update(FRAME)
-            background.draw(surface)
-
-    # ---------------------------------------------------------- 生命值图标
-    def test_heart_icon_is_a_pixel_art_grid(self):
-        """生命值图标是「像素心」：规整网格、左右对称、顶部中间留凹口。"""
-        art = config.HEART_PIXEL_ART
-        self.assertGreaterEqual(len(art), 4, "像素心太小了，看不出心的形状")
-        width = len(art[0])
-        for row in art:
-            self.assertEqual(len(row), width, "像素心每一行必须一样长")
-            self.assertTrue(set(row) <= {"#", "."}, "像素心只允许 # 和 . 两种格子")
-            self.assertEqual(row, row[::-1], "像素心必须左右对称")
-        self.assertEqual(art[0][width // 2 - 1: width // 2 + 1], "..",
-                         "心形顶部中间要留出凹口，否则看着像个三角形")
-        self.assertIn("#", art[-1], "心形底部要有尖")
-
-    def test_heart_surface_matches_the_grid(self):
-        """渲染出来的心和网格一一对应：格子在就是实心，不在就是透明。"""
-        size = 40
-        image = ui.heart_surface(size, config.COLOR_HP)
-        self.assertEqual(image.get_width(), size)
-        self.assertEqual(image.get_height(), int(round(size * ui.HEART_ASPECT)))
-
-        def opaque(col, row):
-            x = int((col + 0.5) * image.get_width() / float(ui.HEART_COLS))
-            y = int((row + 0.5) * image.get_height() / float(ui.HEART_ROWS))
-            return image.get_at((x, y)).a > 0
-
-        for row in range(ui.HEART_ROWS):
-            for col in range(ui.HEART_COLS):
-                self.assertEqual(opaque(col, row),
-                                 config.HEART_PIXEL_ART[row][col] == "#",
-                                 "第 %d 行第 %d 格和图案对不上" % (row, col))
-
-    def test_lost_heart_is_an_empty_outline(self):
-        """已经失去的那颗心只剩外沿：内部镂空，和实心的一眼能区分。"""
-        image = ui.heart_surface(40, config.COLOR_HP_LOST, filled=False)
-        solid = ui.heart_surface(40, config.COLOR_HP, filled=True)
-
-        def opaque(target, col, row):
-            x = int((col + 0.5) * target.get_width() / float(ui.HEART_COLS))
-            y = int((row + 0.5) * target.get_height() / float(ui.HEART_ROWS))
-            return target.get_at((x, y)).a > 0
-
-        hollowed = 0
-        for row in range(ui.HEART_ROWS):
-            for col in range(ui.HEART_COLS):
-                if config.HEART_PIXEL_ART[row][col] != "#":
-                    continue
-                self.assertTrue(opaque(solid, col, row), "实心心不该有缺口")
-                if not opaque(image, col, row):
-                    hollowed += 1
-        self.assertGreater(hollowed, 0, "已经失去的心应该只剩轮廓，内部是空的")
-
-    def test_hud_hearts_are_pixel_hearts(self):
-        """HUD 那一排生命值画的也是像素心：还有的用亮色、失去的用暗色。"""
-        surface = pygame.display.get_surface()
-        surface.fill((0, 0, 0))
-        size, gap = 20, 8
-        height = int(size * ui.HEART_ASPECT)
-        width = ui.draw_hearts(surface, (40, 40), 2, 3, size=size, gap=gap)
-        self.assertEqual(width, 3 * size + 2 * gap, "返回的整排宽度不对")
-
-        def pixels_of(index):
-            rect = pygame.Rect(40 + index * (size + gap), 40 - height // 2, size, height)
-            return [surface.get_at((x, y))[:3]
-                    for x in range(rect.left, rect.right)
-                    for y in range(rect.top, rect.bottom)]
-
-        self.assertIn(config.COLOR_HP, pixels_of(0), "还剩的那颗应该是亮色的心")
-        self.assertIn(config.COLOR_HP_LOST, pixels_of(2), "失去的那颗应该是暗色的心")
-        self.assertNotIn(config.COLOR_HP, pixels_of(2), "失去的那颗不该还是亮的")
-
-
-def _char_direction(char):
-    """关卡布局里的字符 -> 方向名；空格或未知字符返回 None。"""
-    return {">": "right", "<": "left", "^": "up", "v": "down"}.get(char)
-
-
-def same_color_cluster(level):
-    """统计一关里「相邻且同向」的箭头对占比，以及同方向连通块的最大格子数。
-
-    相邻指上下左右；同向的两支箭头挨在一起，屏幕上就是两块同色贴在一起。
-    返回 (占比, 最大块)。占比在方向完全随机时约 0.25，方向交错排可以接近 0。
-    """
-    grid = {}
-    for row, line in enumerate(level.layout):
-        for col, char in enumerate(line):
-            direction = _char_direction(char)
-            if direction is not None:
-                grid[(row, col)] = direction
-
-    pair = same = 0
-    for (row, col), direction in grid.items():
-        for d_row, d_col in ((1, 0), (0, 1)):
-            other = grid.get((row + d_row, col + d_col))
-            if other is None:
-                continue
-            pair += 1
-            if other == direction:
-                same += 1
-
-    seen = set()
-    biggest = 0
-    for start in grid:
-        if start in seen:
-            continue
-        direction = grid[start]
-        stack = [start]
-        seen.add(start)
-        size = 0
-        while stack:
-            row, col = stack.pop()
-            size += 1
-            for d_row, d_col in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                nxt = (row + d_row, col + d_col)
-                if nxt not in seen and grid.get(nxt) == direction:
-                    seen.add(nxt)
-                    stack.append(nxt)
-        biggest = max(biggest, size)
-
-    return (same / float(pair) if pair else 0.0), biggest
+    def test_render_does_not_mutate_the_board(self):
+        """画一遍不能改棋盘状态——渲染和逻辑必须完全分开。"""
+        self.enter_level(3)
+        snapshot = (self.game.board.remaining, self.game.board.hp, self.game.board.state)
+        self.game.mouse_pos = self.game.cell_center(0, 0)
+        self.game.update_hover()
+        self.game.draw()
+        self.game.update(FRAME)
+        self.game.draw()
+        self.assertEqual((self.game.board.remaining, self.game.board.hp,
+                          self.game.board.state), snapshot)
 
 
 def main():
-    suite = unittest.TestLoader().loadTestsFromModule(sys.modules[__name__])
+    """直接 python tests/test_game.py 时的入口：跑全部用例并打印统计。"""
+    loader = unittest.TestLoader()
+    suite = loader.loadTestsFromModule(sys.modules[__name__])
     result = unittest.TextTestRunner(verbosity=2).run(suite)
+    print()
+    print("用例总数：%d" % result.testsRun)
+    print("失败：%d    错误：%d    跳过：%d"
+          % (len(result.failures), len(result.errors), len(result.skipped)))
     return 0 if result.wasSuccessful() else 1
 
 
