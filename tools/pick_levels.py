@@ -37,31 +37,35 @@ import generate_levels as G                                       # noqa: E402
 # (行, 列, 箭头数, 关卡名, 提示语, 目标开局可点数, 单支最长格数)
 # 尺寸一律取竖着的（行 > 列）：游戏按手机竖屏比例做，竖长方形的棋盘才填得满视口。
 #
-# max_len 不是随便给的，它由「棋盘格数 ÷ 箭头数」倒推：这个比值就是平均单支长度，
-# 取到比它大一两格，生成器才有余地铺满又凑够支数。给大了（比如一律 8），
-# 小棋盘会先被十来条长箭头吃光，剩下的空格四面被围、再也放不下新的一支，
-# 支数直接差一大截。
+# max_len 给到「平均单支长度（格数×0.93÷箭头数）」的两倍上下：生成器会给
+# 每支箭抽一个围绕平均值大散开的目标长度，上限太紧会把长的那截压平、
+# 长短差距出不来。上限也不给太大——超过平均的三倍后，长箭很难在
+# 半满的盘上找到整条通路，白烧时间。目标长度本身由 generate_levels.py 抽。
 PICKS = [
-    (11, 8, 21, "初次拉弓", "点朝外的那几支，先开出一条路", 7, 5),
-    (13, 9, 23, "交叉路口", "开局能点的很少，先找朝外的", 6, 6),
-    (14, 10, 22, "连锁反应", "消掉一支，往往就有新的一支能走了", 5, 7),
-    (16, 11, 27, "四面楚歌", "上下左右都要扫一遍", 5, 7),
-    (18, 12, 28, "错位走廊", "箭头更长，先看清它朝哪边", 4, 8),
-    (20, 14, 37, "纵横交错", "别只盯着中间，边角往往藏着出口", 4, 8),
-    (22, 15, 38, "长蛇阵", "一支挨着一支，顺序想好再点", 3, 9),
-    (23, 17, 43, "十面埋伏", "开局只有两三支能动，慢慢找", 3, 9),
-    (26, 18, 46, "万箭归一", "全场只剩几个出口，每一步都要算", 3, 10),
+    (11, 8, 21, "初次拉弓", "点朝外的那几支，先开出一条路", 7, 8),
+    (13, 9, 23, "交叉路口", "开局能点的很少，先找朝外的", 6, 9),
+    (14, 10, 22, "连锁反应", "消掉一支，往往就有新的一支能走了", 5, 11),
+    (16, 11, 27, "四面楚歌", "上下左右都要扫一遍", 5, 12),
+    (18, 12, 28, "错位走廊", "箭头更长，先看清它朝哪边", 4, 13),
+    (20, 14, 37, "纵横交错", "别只盯着中间，边角往往藏着出口", 4, 13),
+    (22, 15, 38, "长蛇阵", "一支挨着一支，顺序想好再点", 3, 15),
+    (23, 17, 43, "十面埋伏", "开局只有两三支能动，慢慢找", 3, 16),
+    (26, 18, 46, "万箭归一", "全场只剩几个出口，每一步都要算", 3, 18),
 ]
 
 
 def evaluate(rows, cols, count, pieces):
     """校验一个候选；不合格返回 None，合格返回它的开局可点数。
 
-    硬性淘汰线只有三条：支数比目标少四支以上（画面明显填不满）、布局不合法、
-    无解。「可点数」不在这里卡——那要跟目标值比，交给 pick 排序，因为
-    「比目标还好点」和「差一点没到目标」两种情况的处理不一样。
+    硬性淘汰线有四条：支数比目标少四支以上（画面明显填不满）、
+    铺满率低于 0.91（tests 里「密密麻麻」那条用例卡 0.90，留点余量）、
+    布局不合法、无解。「可点数」不在这里卡——那要跟目标值比，
+    交给 pick 排序，因为「比目标还好点」和「差一点没到目标」两种情况
+    的处理不一样。
     """
     if len(pieces) < count - 4:            # 支数差太多，画面会显得空
+        return None
+    if G.fill_ratio(rows, cols, pieces) < 0.91:
         return None
     if G.validate_layout_quiet(rows, cols, pieces) is not None:
         return None
@@ -70,30 +74,42 @@ def evaluate(rows, cols, count, pieces):
     return count_free_pieces(rows, cols, pieces)
 
 
+def length_spread(pieces):
+    """箭长的标准差——长短差距的量化。等长盘是 0，差距越大越好。"""
+    lens = [len(p.cells) for p in pieces]
+    mean = sum(lens) / float(len(lens))
+    return (sum((n - mean) ** 2 for n in lens) / len(lens)) ** 0.5
+
+
 def pick(spec, seeds, index=0, slack=1):
     """在若干种子上跑生成器，返回最好的那一个候选。
 
     排序的主键是「**这一版够不够难**」：首先看可点数有没有超出目标太多
-    （超了就是太简单，只能当兜底），然后看有没有正好命中目标，再看铺满率。
+    （超了就是太简单，只能当兜底），然后看有没有正好命中目标；
+    再往后是**箭长的标准差**——满盘等长的箭看着像尺子铺出来的，
+    长短差距本身就是观感的一部分，所以它排在铺满率前面。
 
     slack 是兜底余量：大盘面上出口天然更多，偶尔找不到刚好达标的，
     允许退让 slack 个。真退让了会在报告里标出来，不会悄悄放水。
     """
     rows, cols, count, _name, _hint, target, max_len = spec
+    mean_len = rows * cols / float(count)     # 平均单支长度（铺满率的倒推基准）
     best = None
     for seed in seeds:
-        pieces = G.generate(rows, cols, seed=seed, max_len=max_len, max_pieces=count)
+        pieces = G.generate(rows, cols, seed=seed, max_len=max_len,
+                            max_pieces=count, mean_len=mean_len)
         if not pieces:
             continue
         free = evaluate(rows, cols, count, pieces)
         if free is None:
             continue
         # 第一列：达标（没超出目标 + slack）。不达标的只在实在挑不出时兜底用。
-        # 之后依次比：有没有正好命中目标 -> 离目标差多少 -> 铺满率 -> 支数。
-        # 「离目标差多少」排在铺满率前面是有意的：目标可点数是**手感**指标，
-        # 铺满率只是画面观感，两者冲突时先保手感。
+        # 之后依次比：有没有正好命中目标 -> 离目标差多少 -> 长短差距 -> 铺满率。
+        # 「离目标差多少」排在观感指标前面是有意的：目标可点数是**手感**指标，
+        # 铺满率和长度差只是画面观感，冲突时先保手感。
         score = (free <= target + slack, free == target, -abs(free - target),
-                 G.fill_ratio(rows, cols, pieces), len(pieces))
+                 length_spread(pieces), G.fill_ratio(rows, cols, pieces),
+                 len(pieces))
         if best is None or score > best[0]:
             best = (score, seed, pieces, free)
     if best is None:
@@ -106,8 +122,11 @@ def emit(index, spec, best):
     """把挑中的布局打印成 levels.py 里能直接粘贴的 Level(...) 源码。"""
     rows, cols, _count, name, hint, _target, _max_len = spec
     score, seed, pieces, free = best
-    print("    # 第 %d 关：%d×%d，%d 支，开局可点 %d，铺满率 %.2f（seed=%d）"
-          % (index, rows, cols, len(pieces), free, score[3], seed))
+    lens = sorted(len(p.cells) for p in pieces)
+    print("    # 第 %d 关：%d×%d，%d 支，开局可点 %d，铺满率 %.2f，"
+          "箭长 %d~%d（seed=%d）"
+          % (index, rows, cols, len(pieces), free, score[4],
+             lens[0], lens[-1], seed))
     print("    Level(")
     print('        name="%s",' % name)
     print('        hint="%s",' % hint)
@@ -135,9 +154,10 @@ def main():
         score, seed, pieces, free = best
         target = spec[5]
         mark = "" if score[0] else "  [没达标，已取最难的候选]"
-        print("第 %d 关 %-5s %2d×%-2d  %2d 支  铺满率 %.3f  开局可点 %d（目标 %d）  seed=%d%s"
+        print("第 %d 关 %-5s %2d×%-2d  %2d 支  铺满率 %.3f  长短差 σ=%.2f  "
+              "开局可点 %d（目标 %d）  seed=%d%s"
               % (index, spec[3], spec[0], spec[1], len(pieces),
-                 score[3], free, target, seed, mark),
+                 score[4], score[3], free, target, seed, mark),
               file=sys.stderr)
 
     print("LEVELS = (", file=sys.stdout)
