@@ -6,7 +6,7 @@
 | 这个作业要求在哪里 | <https://edu.cnblogs.com/campus/fzu/2026-01SoftwareEngineeringandSoftwareEngineeringPractice/homework/16718> |
 | 这个作业的目标 | 使用 Python 和 AIGC 完成「一箭又一箭」小游戏 |
 | 学号 | 102402149 |
-| GitHub 仓库 | <https://github.com/zsx123456/one-arrow-after-another> |
+| GitHub 仓库 | <https://github.com/zsx1-2-3/one-arrow-after-another> |
 | 作者 | 周山翔（福州大学 · 数据科学与大数据技术） |
 
 > 技术栈：Python 3.11 + Pygame 2.6.1　|　代码量：`game/` 约 4900 行 + `tools/` 约 1200 行 + 测试约 2200 行
@@ -1421,7 +1421,7 @@ GIF 得降帧率，因为差分再也压不出体积。
 ## 十、如何运行
 
 ```bash
-git clone https://github.com/zsx123456/one-arrow-after-another.git
+git clone https://github.com/zsx1-2-3/one-arrow-after-another.git
 cd one-arrow-after-another
 pip install -r requirements.txt
 python main.py
