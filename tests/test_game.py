@@ -47,6 +47,7 @@ if TOOLS not in sys.path:
 import pygame  # noqa: E402
 
 import generate_levels as tools_generate  # noqa: E402
+import apply_cnblogs_images as tools_apply  # noqa: E402
 import make_blog_for_cnblogs as tools_blog  # noqa: E402
 from game import anim, bgfx, config, levels, pieces, scoring, ui  # noqa: E402
 from game.app import (MENU_PRIMARY_Y, MENU_PROGRESS_Y, MENU_ROW_Y,  # noqa: E402
@@ -2494,6 +2495,10 @@ class BlogExportTestCase(unittest.TestCase):
     在 GitHub 上点开没问题，粘到博客园就是 17 个破图占位——
     博客园那台服务器不认识「../assets」。所以导出脚本负责把地址换成 CDN 外链，
     这几条用例钉住「换干净了」「图名没写错」「正文没被动过」。
+
+    但**换外链只是第一步**：2026-09-22 实测发现 jsDelivr / GitHub raw 在大陆
+    直连全线不通（详见 CnblogsUploadTestCase 的说明），所以外链只能当
+    「给博客园服务器抓取用」的临时地址，最终还是要落到博客园自己的图库上。
     """
 
     def setUp(self):
@@ -2538,6 +2543,66 @@ class BlogExportTestCase(unittest.TestCase):
         with open(path, encoding="utf-8") as f:
             on_disk = f.read()
         self.assertEqual(on_disk, tools_blog.build())
+
+
+class CnblogsUploadTestCase(unittest.TestCase):
+    """把图片搬到博客园自己的图库：地址按顺序填回正文。
+
+    这一组盯的是「2026-09-22 那次翻车」的善后。经过是：
+    blog.md 的相对路径粘到博客园是破图 → 换成 jsDelivr 外链 →
+    **外链在大陆打开还是破图**（实测 jsDelivr 全线直连超时、
+    GitHub raw 也超时，连 http 握手都过不去，不是配置问题）。
+    于是最后一招是把图片传进博客园图库、让地址变成 img*.cnblogs.com。
+
+    人工那步（拖图、复制地址）没法自动测，但**最容易错的那一步**可以：
+    17 个地址必须一个不多一个不少、按顺序落到 17 处引用上。
+    错位是这种活儿最典型的翻车方式——正文看着正常，图片却全对错了位置，
+    不点开根本发现不了，所以这里钉死「数量不等就报错，绝不尽力而为」。
+    """
+
+    def setUp(self):
+        with open(os.path.join(ROOT, "docs", "blog.md"), encoding="utf-8") as f:
+            self.source = f.read()
+        self.count = len(tools_blog.local_images(self.source))
+        self.urls = ["https://img2023.cnblogs.com/blog/1/202609/x%02d.png" % i
+                     for i in range(1, self.count + 1)]
+
+    def test_count_matches_the_body(self):
+        self.assertEqual(self.count, 17, "正文里的图片数量变了，脚本里的说明也要跟着改")
+
+    def test_urls_are_picked_out_of_a_pasted_block(self):
+        """从编辑器复制出来的是一段带 markdown 语法的文字，得能把地址抠出来。"""
+        pasted = "\n".join("![image](%s)" % u for u in self.urls)
+        self.assertEqual(tools_apply.extract_urls(pasted), self.urls)
+
+    def test_urls_are_picked_out_of_plain_lines(self):
+        """只复制了地址栏里那几行时同样要认。"""
+        pasted = " ".join(self.urls) + "\n"
+        self.assertEqual(tools_apply.extract_urls(pasted), self.urls)
+
+    def test_apply_fills_the_urls_in_order(self):
+        final = tools_apply.apply_urls(self.source, self.urls)
+        self.assertEqual(tools_blog.local_images(final), [])
+        self.assertEqual(re.findall(r"\]\((https://[^)]+)\)", final), self.urls)
+
+    def test_apply_refuses_a_mismatch(self):
+        for wrong in (self.urls[:-1], self.urls + ["https://img2023.cnblogs.com/x.png"]):
+            with self.assertRaises(ValueError):
+                tools_apply.apply_urls(self.source, wrong)
+
+    def test_apply_leaves_the_body_untouched(self):
+        """把 17 个地址原样换回相对路径，应当字字还原成 blog.md。"""
+        final = tools_apply.apply_urls(self.source, self.urls)
+        pool = list(tools_blog.local_images(self.source))
+        restored = re.sub(r"\]\(https://[^)]+\)",
+                          lambda m: "](" + "../assets/" + pool.pop(0) + ")",
+                          final)
+        self.assertEqual(restored, self.source)
+
+    def test_notes_warn_about_foreign_hosts(self):
+        self.assertEqual(tools_apply.inspect(self.urls), [])
+        self.assertTrue(tools_apply.inspect(["https://i.ibb.co/x/y.png"] * self.count))
+        self.assertTrue(tools_apply.inspect([self.urls[0]] * self.count))
 
 
 def main():

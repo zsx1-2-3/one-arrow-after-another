@@ -5,24 +5,44 @@
 区别是这次不停在单张画面，而是连续抓帧再交给 Pillow 拼成 GIF。
 
 用法：
-    python tools/make_demo_gif.py
+    python tools/make_demo_gif.py            # 默认档：326×422 / 8fps / 64 色 / 1.8MB
+    python tools/make_demo_gif.py --fps 10 --colors 128 --scale 0.6
+                                             # 高清档：408×528 / 10fps / 128 色 / 3.7MB
 
-输出：assets/demo.gif（408×528 / 10fps，4MB 上下）
+输出：assets/demo.gif
 
 尺寸说明
 --------
-游戏窗口是 680×880（手机竖屏比例），GIF 按 0.6 等比缩到 408×528 再存，
+游戏窗口是 680×880（手机竖屏比例），GIF 按 `--scale` 等比缩再存，
 所以 GIF 里看到的画面比例和真机一致。别按横屏尺寸去缩——
 那样棋盘会被压扁，箭头看着像被踩过。
+
+默认档取 0.48 不是随便定的：**博客园单张图片上限 2MB**，
+而这张 GIF 要贴进博客，所以体积是不可协商的硬指标（详见下节）。
 
 体积控制
 --------
 GIF 是逐帧位图，体积基本正比于「像素数 × 颜色数 × 帧数」，三处都要压：
 
-  * 分辨率 0.6 倍；
-  * 调色板 128 色（画面本来就是大色块的扁平配色，看不出差别）；
-  * 中段「一支一支点完剩下的」用快进录（step_scale），帧数直接除以倍率；
-  * 帧率 10fps——本轮背景加了缓慢漂移的极光带之后，抓帧率从 12 降到了 10。
+  * 分辨率（`--scale`）；
+  * 调色板颜色数（`--colors`）；
+  * 帧率（`--fps`）；
+  * 另外中段「一支一支点完剩下的」用快进录（step_scale），帧数直接除以倍率。
+
+三个开关的实际手感（都是这套画面实测的体积）：
+
+    10fps / 128 色 / 0.60 → 3.7MB     ← 背景加动效之前那一版
+     8fps /  64 色 / 0.60 → 2.4MB
+     8fps /  64 色 / 0.55 → 2.0MB     还是贴边
+     8fps /  64 色 / 0.50 → 1.9MB     2MiB 够、2,000,000 字节不够，赌不起
+     8fps /  64 色 / 0.48 → 1.8MB     ← 定这一档（1,887,192 字节，两种算法都在限内）
+
+    （顺带试过"关掉抖动"，指望量化噪点变纯色后 LZW 压得更小——**体积一个字节没变**，
+      Pillow 这条路不吃这个参数，所以代码里没有这一段。）
+
+为什么最后砍的是尺寸：GIF 里那几行 UI 小字**无论如何都看不清**
+（0.6 倍时已经只有 8 像素高），所以"缩尺寸"损失的是最不值钱的东西；
+而帧率掉到 6 以下，「整条箭头像绳子一样飞出去」这个要展示的重点就先垮了。
 
 背景一动，GIF 就小不下来（这一版为止最大的一笔体积代价）
 --------------------------------------------------------
@@ -30,9 +50,10 @@ GIF 是逐帧位图，体积基本正比于「像素数 × 颜色数 × 帧数�
 棋盘铺满时确实如此，所以早先 12fps 能压到 2.6MB。
 但背景现在是活的——极光带、浮尘、光晕每帧都在变，只是变得很慢。
 慢不解决问题：差分的单位是矩形，一像素的涟漪和十像素的位移都要写满全屏，
-于是 12fps 直接涨到 4.2MB。降到 10fps 才落回 3.7MB 左右，
-再往下就会看出卡顿了。想要一个 2MB 出头的 GIF，就把
-config.BG_AURORA_COUNT / BG_STAR_COUNT 录之前临时写 0。
+于是 12fps 直接涨到 4.2MB，10fps 是 3.7MB，8fps 还有 2.4MB。
+想再往下走，要么把背景关掉（`config.BG_AURORA_COUNT = 0`，但博客里正好有一节
+在讲背景动效，拿一张死背景的 GIF 去配它就对不上了），要么就动上面那三个开关。
+最后选的是后者。
 
 录制的路线（脚本里每一步都有注释，这里只说叙事）：
 
@@ -44,6 +65,7 @@ config.BG_AURORA_COUNT / BG_STAR_COUNT 录之前临时写 0。
 注意：脚本用**临时目录里的存档**，不会动你自己那份 progress.json。
 """
 
+import argparse
 import os
 import sys
 
@@ -68,12 +90,42 @@ from game.levels import LEVELS  # noqa: E402
 OUT_PATH = os.path.join(ROOT, "assets", "demo.gif")
 
 FRAME = 1.0 / 60.0
-CAPTURE_FPS = 10                      # GIF 每秒的帧数（越小体积越小，代价是卡顿）
+# 默认这一档是「能贴进博客园」的档位，三个数字的来由见文件开头「体积控制」。
+# 想录高清版就命令行覆盖：--fps 10 --colors 128 --scale 0.6（3.7MB，别拿去交博客）。
+CAPTURE_FPS = 8                       # GIF 每秒的帧数（越小体积越小，代价是卡顿）
 GRAB_EVERY = max(1, int(round(1.0 / (FRAME * CAPTURE_FPS))))
-SCALE = 0.6                           # 680×880 -> 408×528，等比缩放
+SCALE = 0.48                          # 680×880 -> 326×422，等比缩放
 WIDTH = int(round(config.WINDOW_WIDTH * SCALE))
 HEIGHT = int(round(config.WINDOW_HEIGHT * SCALE))
-GIF_COLORS = 128                      # 转成多少色的调色板图（越小体积越小）
+GIF_COLORS = 64                       # 转成多少色的调色板图（越小体积越小）
+
+
+def parse_args(argv=None):
+    """三个体积开关 + 输出路径，默认值就是正式版那一档。"""
+    parser = argparse.ArgumentParser(description="录制演示 GIF")
+    parser.add_argument("--fps", type=int, default=CAPTURE_FPS,
+                        help="GIF 帧率，默认 %d" % CAPTURE_FPS)
+    parser.add_argument("--colors", type=int, default=GIF_COLORS,
+                        help="调色板颜色数，默认 %d" % GIF_COLORS)
+    parser.add_argument("--scale", type=float, default=SCALE,
+                        help="等比缩放，默认 %.2f" % SCALE)
+    parser.add_argument("--out", default=OUT_PATH,
+                        help="输出路径，默认 assets/demo.gif")
+    return parser.parse_args(argv)
+
+
+def configure(args):
+    """把命令行参数落到本模块的全局量上（capture/record 读的就是它们）。"""
+    global CAPTURE_FPS, GRAB_EVERY, SCALE, WIDTH, HEIGHT, GIF_COLORS, OUT_PATH
+    if args.fps <= 0 or args.colors < 2 or args.scale <= 0:
+        raise SystemExit("参数不合理：fps>0、colors>=2、scale>0")
+    CAPTURE_FPS = args.fps
+    GRAB_EVERY = max(1, int(round(1.0 / (FRAME * CAPTURE_FPS))))
+    SCALE = args.scale
+    WIDTH = int(round(config.WINDOW_WIDTH * SCALE))
+    HEIGHT = int(round(config.WINDOW_HEIGHT * SCALE))
+    GIF_COLORS = min(256, args.colors)
+    OUT_PATH = args.out
 
 
 def level_index(name):
@@ -117,7 +169,8 @@ def unhover(game):
     game.update_hover()
 
 
-def main():
+def main(argv=None):
+    configure(parse_args(argv))
     pygame.init()
     screen = pygame.display.set_mode((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
     pygame.display.set_caption(config.WINDOW_TITLE)
@@ -210,7 +263,8 @@ def main():
 
     # -------- 拼成 GIF --------
     # 两个体积开关，缺一不可：
-    #   * 转成 128 色的调色板图（GIF 本来也只支持 256 色，128 色几乎看不出差别）；
+    #   * 转成 GIF_COLORS 色的调色板图（GIF 本来也只支持 256 色，128 色几乎看不出差别，
+    #     交博客要压到 2MB 以内时再往下降到 64 色）；
     #   * optimize=True 且**不要**写 disposal=2。
     #     这是踩过的坑：disposal=2（每帧先清成背景再画）配上不透明帧时，
     #     Pillow 会放弃帧间差分、把每帧都按整幅写进去，体积直接翻几倍。

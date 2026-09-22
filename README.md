@@ -171,6 +171,16 @@ python tools/make_demo_gif.py      # 演示动画   -> assets/demo.gif（需要 
 
 两个脚本都用**临时目录里的存档**，不会动你自己那份 `progress.json`。
 
+演示 GIF 默认录 **326×422 / 8fps / 64 色 / 1.8 MB** 这一档，
+因为博客园单张图片上限是 2 MB，而这张 GIF 要贴进博客。
+想录高清版就覆盖参数（3.7 MB，别拿去交博客）：
+
+```bash
+python tools/make_demo_gif.py --fps 10 --colors 128 --scale 0.6
+```
+
+为什么要压、压哪一项损失最小，`tools/make_demo_gif.py` 开头的注释里有完整实测数据。
+
 ### 7. 批量生成新关卡（可选）
 
 ```bash
@@ -185,15 +195,32 @@ python tools/pick_levels.py                                       # 从候选里
 ### 8. 导出「博客园版」博客（可选）
 
 ```bash
-python tools/make_blog_for_cnblogs.py            # -> docs/blog-cnblogs.md
-python tools/make_blog_for_cnblogs.py --check    # 只体检：图名对不对、路径换干净没
-python tools/make_blog_for_cnblogs.py --host cdn # 换一条 CDN 线路（gcore/cdn/fastly/raw）
+python tools/make_blog_for_cnblogs.py            # 第 1 步 -> docs/blog-cnblogs.md
+python tools/apply_cnblogs_images.py 地址.txt    # 第 2 步 -> docs/blog-final.md
 ```
 
 `docs/blog.md` 里的 17 张图用的是相对路径（`../assets/xxx.png`），在 GitHub 上正常，
 但**粘进博客园只会得到 17 个破图**——博客园解析不了「上一级目录」。
-这个脚本正文一字不动、只把图片地址换成 jsDelivr 绝对外链，
-产出 `docs/blog-cnblogs.md`，交作业时粘那一份。写完上面几个脚本后重跑一次即可。
+
+于是要先换成绝对地址。**但请注意：换外链并不够。**
+2026-09-22 实测，jsDelivr 的四个入口和 GitHub raw 在大陆**直连全部超时**，
+免费图床（catbox / 0x0 / sm.ms / imgse / picui）也连不上或要登录——
+也就是说换成外链之后，读者打开博客**照样是 17 个破图**。
+能让所有人稳定看到图的地方只有一个：**博客园自己的图库**。
+
+完整流程：
+
+1. `python tools/make_blog_for_cnblogs.py` 产出 `docs/blog-cnblogs.md`（图片换成绝对地址）；
+2. 把它粘进博客园 Markdown 编辑器，点编辑器右下角的「**提取图片**」——
+   博客园会去抓这些外链、转存到自己的图库，并自动改写正文里的地址。成功就到此为止；
+3. 转存失败时（博客园服务器也抓不到 jsDelivr）走拖图：
+   把 `assets/` 里 17 个文件一次拖进编辑器，全选复制那 17 行地址存成 `地址.txt`，
+   再跑 `python tools/apply_cnblogs_images.py 地址.txt`，得到 `docs/blog-final.md`，
+   全文粘进编辑器发布。
+
+第 3 步的顺序天然对得上：正文引用这 17 张图的顺序正好是文件名的升序
+（`demo.gif`、`shot-01-menu.png` … `shot-16-settings-day.png`）。
+数量对不上脚本会直接报错停下，不会错位硬填。
 
 ---
 
@@ -302,10 +329,11 @@ one-arrow-after-another/
 │   ├── _showcase.py          # 截图/动图共用的「取景」策略（按状态找目标、临时存档）
 │   ├── make_screenshots.py   # 无头模式批量截图脚本
 │   ├── make_demo_gif.py      # 无头模式录制演示 GIF
-│   ├── make_blog_for_cnblogs.py  # 把博客的图片换成绝对外链，产出可粘贴到博客园的版本
+│   ├── make_blog_for_cnblogs.py  # 把博客的图片换成绝对外链（第 1 步）
+│   ├── apply_cnblogs_images.py   # 把博客园图床地址按顺序填回正文（第 2 步）
 │   └── sync_test_log.py      # 把 test-report 里的「完整测试日志」块与真实用例同步
 └── tests/
-    └── test_game.py          # 自动化测试（246 个用例）
+    └── test_game.py          # 自动化测试（253 个用例）
 ```
 
 ### 代码设计要点
@@ -453,7 +481,7 @@ def highest_unlocked(self, total):
 
 ## 八、测试结果
 
-`python tests/test_game.py` 共 **246 个用例全部通过**，覆盖作业要求的 T01–T06：
+`python tests/test_game.py` 共 **253 个用例全部通过**，覆盖作业要求的 T01–T06：
 
 | 编号 | 测试内容 | 预期结果 | 实际结果 |
 | --- | --- | --- | --- |
@@ -464,7 +492,7 @@ def highest_unlocked(self, total):
 | T05 | 生命值耗尽 | 显示失败并允许重新开始 | ✅ 通过 |
 | T06 | 游戏进行中重新开始 | 箭头布局和生命值恢复 | ✅ 通过 |
 
-测试分成十二组：
+测试分成十三组：
 
 | 测试类 | 覆盖内容 |
 | --- | --- |
@@ -478,6 +506,7 @@ def highest_unlocked(self, total):
 | `AnimationTestCase` | 整条箭头沿路径飞出（时长随弧长伸缩）、撞击抖动、飘字与心碎的生命周期 |
 | `BackgroundTestCase` | 四层背景动效：光带下沉会绕回、端头不落到画面里、亮度分档缓存不涨、浮尘上浮回绕、流星按计时出现又收掉、游戏界面比菜单收敛、日间改做云影、数量写 0 真的关掉 |
 | `BlogExportTestCase` | 博客园版导出：17 张图都对得上 `assets/` 里的文件、导出后不留相对路径、正文一字未改、能切换 CDN 线路、缺文件会报错、仓库里那份导出件必须是最新的 |
+| `CnblogsUploadTestCase` | 图床地址按序填回：能从「带 markdown 语法的粘贴内容」和「纯地址行」两种输入里抠出地址、按顺序替换、**数量对不上必须报错（不许错位硬填）**、还原后与原文逐字相同、非博客园域名会给出提醒 |
 | `GameFlowTestCase` | 完整流程、场景渲染、开始界面排版、总览交互、教学引导、9 关顺序通关、计时 / 提示 / 辅助线 / 缩放平移、界面三块分区不重叠、辅助线几何（`guide_segment` 与被挡路径共线且落在挡路那一格内、箭头飞走后消失） |
 | `VisualVarietyTestCase` | 相邻箭头不同色、日夜间主题两套配色都完整、箭头与箭头造型、背景元素 |
 
@@ -492,8 +521,8 @@ def highest_unlocked(self, total):
 ## 九、AIGC 使用说明
 
 本项目使用 AIGC 工具辅助完成需求拆解、代码编写、Bug 排查、关卡批量生成与测试用例设计。
-开发过程中 **25 次具有代表性的 AIGC 协作**（提出了什么要求、AI 给了什么、实际效果如何、
-人工做了哪些修改）记录在 [`docs/blog.md`](docs/blog.md)，其中 22 次展开成了完整记录。
+开发过程中 **26 次具有代表性的 AIGC 协作**（提出了什么要求、AI 给了什么、实际效果如何、
+人工做了哪些修改）记录在 [`docs/blog.md`](docs/blog.md)，其中 23 次展开成了完整记录。
 
 几个真实的「AI 写错、人改对」的例子：
 
@@ -556,6 +585,8 @@ Linux 下可先安装字体：`sudo apt install fonts-wqy-zenhei`。
 **Q10：博客粘到博客园，图片全变成破图了？**
 `docs/blog.md` 里的 17 张图用的是相对路径（`../assets/xxx.png`），
 只在 GitHub 上有效——博客园解析不了「上一级目录」。
-交作业时请粘 **`docs/blog-cnblogs.md`**：它由 `python tools/make_blog_for_cnblogs.py` 生成，
-正文一字不差，只把图片地址换成 jsDelivr 的绝对外链。
-某条 CDN 线路慢的话用 `--host cdn` / `--host fastly` 换一条重新生成。
+但换成绝对外链也**不够**：实测 jsDelivr 和 GitHub raw 在大陆直连全部超时，
+读者照样看不到图。最终解法是把图片放进**博客园自己的图库**：
+先粘 `docs/blog-cnblogs.md` 再点编辑器的「提取图片」一键转存；
+转存不了就拖图上传后跑 `python tools/apply_cnblogs_images.py` 把地址填回正文。
+完整流程见上面第四节第 8 小节，以及博客里的「记录 23」。

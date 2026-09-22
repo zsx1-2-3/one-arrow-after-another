@@ -9,8 +9,17 @@ blog.md 里的 17 张图用的是**相对路径**（`../assets/shot-01-menu.png`
 所以需要一份把图片地址换成绝对外链的版本。
 
 外链走 jsDelivr：它反过来代理 GitHub 仓库里的文件，
-`https://gcore.jsdelivr.net/gh/用户/仓库@分支/assets/文件名` 就能拿到，
-国内一般能直连（GitHub 自己的 raw 域名经常打不开）。
+`https://gcore.jsdelivr.net/gh/用户/仓库@分支/assets/文件名` 就能拿到。
+
+**但 2026-09-22 实测：这条外链在大陆打不开。**
+直连测下来 jsDelivr 的四个入口（cdn / fastly / gcore / testingcf）全部超时，
+GitHub raw 也超时，连 `git ls-remote https://github.com/git/git.git` 都握手失败——
+不是线路参数选错，是这些域名在国内本来就不通（走代理才通）。
+
+所以**这份 `blog-cnblogs.md` 只是中间产物**，它解决的是「博客园那台服务器
+读不到 ../assets」这一半问题，另一半（大陆读者点不开 jsdelivr）得靠
+`tools/apply_cnblogs_images.py`：把图片传进博客园自己的图库、
+再把地址填回正文。两条命令的先后顺序与完整操作见那个脚本开头的说明。
 
 正文一个字都不改，只换图片地址，粘的时候用这个文件、不要用 blog.md。
 
@@ -21,8 +30,8 @@ blog.md 里的 17 张图用的是**相对路径**（`../assets/shot-01-menu.png`
     python tools/make_blog_for_cnblogs.py --check    # 只体检，不写文件
 
 线路参数 --host（默认 gcore）：
-    gcore / cdn / fastly   都是 jsDelivr 的入口，实测 gcore 最快
-    raw                    直接用 GitHub raw，只在有代理时可用
+    gcore / cdn / fastly   都是 jsDelivr 的入口（大陆实测都不通，供有代理时用）
+    raw                    直接用 GitHub raw，同样需要代理
 """
 
 import argparse

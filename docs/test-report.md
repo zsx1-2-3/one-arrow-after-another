@@ -3,7 +3,7 @@
 本文件记录《一箭又一箭》的自动化测试结果与关卡可解性校验结果，对应作业要求中的
 「5. 测试要求」与「3.1 至少设计 3 个可以正常通关的关卡」。
 
-* 测试用例总数：**246 个，全部通过**（`Ran 246 tests` → `OK`）
+* 测试用例总数：**253 个，全部通过**（`Ran 253 tests` → `OK`）
 * 关卡校验：**教学关 + 9 个编号关卡全部可解**（`tools/verify_levels.py` 退出码 0）
 * 本文件里的输出全部是真实运行的结果，没有手工润色过的数字
 
@@ -30,12 +30,12 @@ python -m unittest discover -s tests -v
 ## 二、总体结果
 
 ```
-Ran 246 tests in 15.594s
+Ran 253 tests in 16.774s
 
 OK
 ```
 
-246 个用例全部通过，分为十二组：
+253 个用例全部通过，分为十三组：
 
 | 测试类 | 用例数 | 覆盖内容 |
 | --- | --- | --- |
@@ -49,6 +49,7 @@ OK
 | `AnimationTestCase` | 13 | 整条箭头沿路径飞出（时长随路径伸缩）、撞击抖动与泛红、飘字、心碎 |
 | `BackgroundTestCase` | 12 | 三个场景带背景渲染、背景跟随主题、四层动效（光带下沉绕回 / 端头不落进画面 / 亮度分档缓存有上限 / 倾斜只加高度 / 浮尘上浮回绕 / 流星出现又收掉）、游戏界面比菜单收敛、日间改做云影、数量写 0 真的关掉 |
 | `BlogExportTestCase` | 6 | 博客园版导出：17 张图都对得上 `assets/` 里的文件、导出后不留相对路径、地址还原后与原文逐字相同、能切换 CDN 线路、缺文件会报错、仓库里那份导出件必须是最新的 |
+| `CnblogsUploadTestCase` | 7 | 图床地址按序填回：从「带 markdown 语法的粘贴内容」和「纯地址行」两种输入里抠地址、按顺序替换、**数量对不上必须报错**、还原后与原文逐字相同、非博客园域名给提醒 |
 | `GameFlowTestCase` | 82 | 场景切换、关卡总览、解锁链路、教学引导、T04~T06、结算面板、计时 / 提示 / 辅助线 / 缩放平移、开始界面排版与分区、键盘快捷键 |
 | `VisualVarietyTestCase` | 9 | 相邻箭头不同色、配色来自调色板、各关渲染、悬停高亮、渲染不改棋盘 |
 
@@ -446,6 +447,13 @@ test_validate_layout_rejects_out_of_board ... ok
 test_validate_layout_rejects_overlap ... ok
 test_validate_layout_rejects_piece_facing_own_body ... ok   箭头正对着自己的箭头 -> 永远飞不出去，必须在关卡校验里拦掉。
 test_validate_layout_rejects_self_crossing ... ok
+test_apply_fills_the_urls_in_order ... ok
+test_apply_leaves_the_body_untouched ... ok   把 17 个地址原样换回相对路径，应当字字还原成 blog.md。
+test_apply_refuses_a_mismatch ... ok
+test_count_matches_the_body ... ok
+test_notes_warn_about_foreign_hosts ... ok
+test_urls_are_picked_out_of_a_pasted_block ... ok   从编辑器复制出来的是一段带 markdown 语法的文字，得能把地址抠出来。
+test_urls_are_picked_out_of_plain_lines ... ok   只复制了地址栏里那几行时同样要认。
 test_base_cell_is_within_limits ... ok
 test_board_fills_the_viewport_vertically ... ok   竖屏棋盘应当把视口高度基本占满，否则上下会各空出一条。
 test_board_fits_the_viewport_at_default_zoom ... ok
