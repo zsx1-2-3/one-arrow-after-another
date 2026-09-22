@@ -63,6 +63,18 @@ EDGE_LAYOUT = (".^..", "...>", "<...", "..v.")
 CORNER_LAYOUT = ("v...", "....", "....", "...^")
 
 
+def level_index(name):
+    """按关卡名查下标。
+
+    关号会随着「插一关 / 删一关」整体前移或后移，写死的数字会静默指错关卡
+    （测试还照常通过，只是测的已经不是原来那一关了），所以一律按名字查。
+    """
+    for index, level in enumerate(LEVELS):
+        if level.name == name:
+            return index
+    raise KeyError("没有叫「%s」的关卡" % name)
+
+
 class BoardRuleTestCase(unittest.TestCase):
     """棋盘规则（纯逻辑，不需要 pygame）。"""
 
@@ -203,8 +215,12 @@ class SolverTestCase(unittest.TestCase):
             self.assertEqual(board.remaining, 0)
 
     def test_level_count_and_difficulty_ramp(self):
-        """关卡数量够玩，且难度整条曲线是递增的。"""
-        self.assertGreaterEqual(TOTAL_LEVELS, 8)
+        """标准关正好 9 关，且难度整条曲线是递增的。
+
+        关数写成硬断言是故意的：这是需求本身（9 个标准关 + 1 个独立的教学关），
+        以后再加关就得同时改这条用例，等于逼着人再确认一次「还符合需求吗」。
+        """
+        self.assertEqual(TOTAL_LEVELS, 9, "标准关应当是 9 关，另加 1 个独立的教学关")
         scores = [level.difficulty_score for level in LEVELS]
         self.assertEqual(scores, sorted(scores), "难度分应当从左到右递增")
 
@@ -238,6 +254,33 @@ class SolverTestCase(unittest.TestCase):
         self.assertGreaterEqual(LEVELS[0].free_count, 2)
         self.assertNotEqual(LEVELS[0].layout, TUTORIAL.layout,
                             "第 1 关不该和教学关长得一样")
+
+    def test_difficulty_steps_stay_smooth_across_nine_levels(self):
+        """九个关卡的难度是一级一级加的，任意相邻两关都不能顶出一个大台阶。
+
+        把关卡表从 8 关补到 9 关时，最讲究的就是「新关插在哪儿」——
+        插错地方会在曲线上顶出一处陡坡（原来第 5→6 关一跳 22.3 分，
+        后一关的箭头数是前一关的 1.67 倍，中间缺了一档）。
+        这条用例把两件事钉死：一次只许加 1~10 支箭头；相邻难度差 ≤ 20 分。
+        """
+        arrows = [level.arrow_count for level in LEVELS]
+        for index, (before, after) in enumerate(zip(arrows, arrows[1:]), start=2):
+            self.assertGreaterEqual(after, before, "第 %d 关箭头数反而变少了" % index)
+            self.assertLessEqual(after - before, 10,
+                                 "第 %d 关一次加了 %d 支箭头，台阶太陡"
+                                 % (index, after - before))
+
+        scores = [level.difficulty_score for level in LEVELS]
+        gaps = [after - before for before, after in zip(scores, scores[1:])]
+        self.assertLess(max(gaps), 20.0, "相邻两关的难度差别超过 20 分")
+        self.assertGreater(max(gaps), 12.0,
+                           "最后一跳应当拉到 12 分以上，否则收尾不够有力")
+
+        # 台阶是「越往后越大」：前半程平均步子明显小于后半程
+        half = len(gaps) // 2
+        early = sum(gaps[:half]) / half
+        late = sum(gaps[half:]) / (len(gaps) - half)
+        self.assertGreater(late, early, "难度台阶应当越往后越大")
 
     def test_tutorial_is_not_a_numbered_level(self):
         """教学关独立于关卡表：不占第 1 关的位置，也不参与编号。"""
@@ -813,8 +856,9 @@ class GameFlowTestCase(unittest.TestCase):
         self.assertEqual(self.game.overlay, OVERLAY_ALL_CLEAR)
 
     # ---------------------------------------------------------- 得分结算
-    # 用第 6 关「错位走廊」做样本：6 颗心、满分 1200，中间量足够看出差别。
-    SAMPLE = 5
+    # 用「错位走廊」做样本：6 颗心、满分 1200，中间量足够看出差别。
+    # 按名字查下标，关卡表插一关也不会指到别的关卡上去。
+    SAMPLE = level_index("错位走廊")
 
     def test_clearing_without_mistakes_pays_the_full_score(self):
         """零失误通关：拿满分、记进存档，结算面板写出完美奖励。"""
@@ -1160,7 +1204,7 @@ class GameFlowTestCase(unittest.TestCase):
 
     # ---------------------------------------------------------- 全关卡回归
     def test_all_levels_can_be_cleared_in_order(self):
-        """按顺序把 8 关全部打通，验证解锁链路与关卡数据整体可用。"""
+        """按顺序把 9 关全部打通，验证解锁链路与关卡数据整体可用。"""
         game = self.game
         for index in range(TOTAL_LEVELS):
             self.assertTrue(game.start_level(index),

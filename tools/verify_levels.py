@@ -107,8 +107,13 @@ def main():
         return 1
     print("校验结果：教学关 + 全部 %d 个编号关卡均可正常通关。" % len(report))
     if not args.markdown:
-        print("难度参考：第 1~4 关靠放大棋盘，第 5 关起靠密度加难——")
-        print("          棋盘尺寸到第 7 关就封顶在 9×9，之后同样的格子里箭头越来越多；")
+        # 封顶关号从关卡数据里现算，不写死——插关删关的时候这种数字最容易过期，
+        # 而且过期了也不会报错，只会静静地印一句错的说明（之前就写过「第 7 关」）。
+        sizes = [max(level.rows, level.cols) for level in LEVELS]
+        max_side = max(sizes)
+        frozen = sizes.index(max_side) + 1
+        print("难度参考：棋盘尺寸逐关放大，第 %d 关到 %d×%d 就封顶，" % (frozen, max_side, max_side))
+        print("          之后同样的格子里塞进更多箭头，靠密度继续加难；")
         print("          开局可点的箭头越少，越要在开局仔细找出口。")
         print("生命值参考：按难度星级给，第 1 关 4 颗心、最后一关 7 颗心。")
         print("            关卡越难容错越高，一次手滑不至于被打回原点。")
