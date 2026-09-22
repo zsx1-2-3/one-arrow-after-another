@@ -7,11 +7,11 @@
 用法：
     python tools/make_demo_gif.py
 
-输出：assets/demo.gif（360×576 / 12fps，控制在 3MB 以内）
+输出：assets/demo.gif（408×528 / 10fps，4MB 上下）
 
 尺寸说明
 --------
-游戏窗口是 600×960（手机竖屏比例），GIF 按 0.6 等比缩到 360×576 再存，
+游戏窗口是 680×880（手机竖屏比例），GIF 按 0.6 等比缩到 408×528 再存，
 所以 GIF 里看到的画面比例和真机一致。别按横屏尺寸去缩——
 那样棋盘会被压扁，箭头看着像被踩过。
 
@@ -21,7 +21,18 @@ GIF 是逐帧位图，体积基本正比于「像素数 × 颜色数 × 帧数�
 
   * 分辨率 0.6 倍；
   * 调色板 128 色（画面本来就是大色块的扁平配色，看不出差别）；
-  * 中段「一支一支点完剩下的」用快进录（step_scale），帧数直接除以倍率。
+  * 中段「一支一支点完剩下的」用快进录（step_scale），帧数直接除以倍率；
+  * 帧率 10fps——本轮背景加了缓慢漂移的极光带之后，抓帧率从 12 降到了 10。
+
+背景一动，GIF 就小不下来（这一版为止最大的一笔体积代价）
+--------------------------------------------------------
+上面那句「optimize=True 走帧间差分」有个前提：**大部分区域不动**。
+棋盘铺满时确实如此，所以早先 12fps 能压到 2.6MB。
+但背景现在是活的——极光带、浮尘、光晕每帧都在变，只是变得很慢。
+慢不解决问题：差分的单位是矩形，一像素的涟漪和十像素的位移都要写满全屏，
+于是 12fps 直接涨到 4.2MB。降到 10fps 才落回 3.7MB 左右，
+再往下就会看出卡顿了。想要一个 2MB 出头的 GIF，就把
+config.BG_AURORA_COUNT / BG_STAR_COUNT 录之前临时写 0。
 
 录制的路线（脚本里每一步都有注释，这里只说叙事）：
 
@@ -57,9 +68,9 @@ from game.levels import LEVELS  # noqa: E402
 OUT_PATH = os.path.join(ROOT, "assets", "demo.gif")
 
 FRAME = 1.0 / 60.0
-CAPTURE_FPS = 12                      # GIF 每秒的帧数（越小体积越小）
+CAPTURE_FPS = 10                      # GIF 每秒的帧数（越小体积越小，代价是卡顿）
 GRAB_EVERY = max(1, int(round(1.0 / (FRAME * CAPTURE_FPS))))
-SCALE = 0.6                           # 600×960 -> 360×576，等比缩放
+SCALE = 0.6                           # 680×880 -> 408×528，等比缩放
 WIDTH = int(round(config.WINDOW_WIDTH * SCALE))
 HEIGHT = int(round(config.WINDOW_HEIGHT * SCALE))
 GIF_COLORS = 128                      # 转成多少色的调色板图（越小体积越小）

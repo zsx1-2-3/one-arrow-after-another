@@ -1375,6 +1375,122 @@ class BackgroundTestCase(unittest.TestCase):
         config.apply_theme("night")
         ui.clear_caches()
 
+    # -------- 极光带 --------
+    def make_background(self, scene=SCENE_MENU):
+        return bgfx.Background((config.WINDOW_WIDTH, config.WINDOW_HEIGHT), scene)
+
+    def test_aurora_fills_the_screen_from_the_first_frame(self):
+        """开局画面里就该有光带。
+
+        光带的初始位置刻意沿全高铺开而不是都堆在屏外——不然"打开看一眼"
+        和截图脚本拍到的那几秒正好是空画面。
+        """
+        bg = self.make_background()
+        self.assertEqual(len(bg.aurora), config.BG_AURORA_COUNT)
+        visible = [band for band in bg.aurora if 0 <= band["y"] <= bg.height]
+        self.assertGreaterEqual(len(visible), config.BG_AURORA_COUNT // 2)
+
+    def test_aurora_bands_sink_and_circulate(self):
+        bg = self.make_background()
+        before = [band["y"] for band in bg.aurora]
+        for _ in range(60):
+            bg.update(FRAME)
+        for band, start in zip(bg.aurora, before):
+            self.assertGreater(band["y"], start, "光带该往下走")
+
+        # 推进到最慢的一条也走完一整趟：滑出下边之后必须回到上边，不能一去不回
+        for _ in range(200):
+            bg.update(1.0)
+        for band in bg.aurora:
+            self.assertLess(band["y"], bg.height + bg.aurora_pad,
+                            "光带滑出下边之后要回到上边")
+
+    def test_aurora_ends_never_show_on_screen(self):
+        """光带是一条**有端头的椭圆**，端头落在画面里就像一个圆钝的截口。
+
+        所以宽度必须盖满整屏、横向摆动还得收得比"多出来的那截"更小。
+        """
+        bg = self.make_background()
+        for band in bg.aurora:
+            reach = band["sway"] + band["radius"] * band["stretch"]
+            self.assertLessEqual(band["x"] - reach, 0.0, "左端要落在屏外")
+            self.assertGreaterEqual(band["x"] + reach, float(bg.width), "右端要落在屏外")
+
+    def test_band_images_are_cached_per_level(self):
+        bg = self.make_background()
+        band = bg.aurora[0]
+        bright = bg._band_image(band, 0.5)
+        self.assertIs(bg._band_image(band, 0.5), bright, "同一档位该复用同一张贴图")
+        self.assertIsNot(bg._band_image(band, 0.1), bright, "不同档位该是不同贴图")
+        self.assertLessEqual(len(bg._band_cache),
+                             max(1, len(bg.aurora)) * config.BG_AURORA_LEVELS,
+                             "亮度分档没管住，缓存会被呼吸撑爆")
+
+    def test_tilt_only_adds_height(self):
+        """倾斜走的是逐列错位：宽度不变，只多出 tan(角度)×宽 的高度。
+
+        这是那笔内存账的契约（换掉 transform.rotate 之后 21MB -> 8MB），
+        哪天有人图省事改回 rotate，这条会先红。
+        """
+        wide = pygame.transform.smoothscale(
+            ui.glow_surface(28, (40, 60, 120), 2.0, 1.0), (400, 56))
+        self.assertIs(bgfx.Background._tilt(wide, 0.0), wide,
+                      "不倾斜就该原样返回，不做多余的拷贝")
+        tilted = bgfx.Background._tilt(wide, 8.0)
+        self.assertEqual(tilted.get_width(), wide.get_width())
+        extra = int(math.tan(math.radians(8.0)) * wide.get_width()) + 2
+        self.assertEqual(tilted.get_height(), wide.get_height() + extra)
+
+    # -------- 浮尘 / 流星 --------
+    def test_motes_float_up_and_wrap_around(self):
+        bg = self.make_background()
+        self.assertGreater(bg.star_count, 0)
+        star = bg.stars[0]
+        start = star["y"]
+        bg.update(FRAME)
+        self.assertLess(star["y"], start, "浮尘该往上飘")
+        star["y"] = -10.0                       # 推到上边之外
+        bg.update(FRAME)
+        self.assertGreater(star["y"], bg.height - 1, "飘出上边要回到下边")
+
+    def test_shooting_star_spawns_then_clears(self):
+        bg = self.make_background()
+        self.assertIsNone(bg.shooting)
+        bg.shoot_timer = 0.0
+        bg.update(FRAME)
+        self.assertIsNotNone(bg.shooting, "计时到了该划一颗")
+        for _ in range(int(bg.shooting["duration"] / FRAME) + 2):
+            bg.update(FRAME)
+        self.assertIsNone(bg.shooting, "飞完就该收掉")
+        self.assertGreater(bg.shoot_timer, 0.0, "收掉之后要重新开始计时")
+
+    # -------- 浓淡：场景与主题 --------
+    def test_play_scene_is_quieter_than_menu(self):
+        bg = self.make_background()
+        menu = (bg.aurora_intensity, bg.star_count)
+        bg.set_scene(SCENE_PLAY)
+        self.assertLess(bg.aurora_intensity, menu[0], "游戏界面里光带要收敛")
+        self.assertLess(bg.star_count, menu[1], "游戏界面里浮尘要减半")
+        self.assertLessEqual(bg.star_count, config.BG_STAR_COUNT_PLAY)
+
+    def test_light_layers_go_quiet_in_day_theme(self):
+        """日间主题是浅底：加法光会糊成白斑，所以光带改减法（云影）、浮尘直接关掉。"""
+        night = self.make_background()
+        self.assertFalse(night.sunlit)
+        self.assertGreater(night.star_count, 0)
+
+        config.apply_theme("day")
+        try:
+            ui.clear_caches()
+            day = self.make_background()
+            self.assertTrue(day.sunlit)
+            self.assertEqual(day.star_count, 0, "浅底上的浮尘看不见，白花这笔钱")
+            self.assertLess(day.aurora_intensity, night.aurora_intensity)
+            day.draw(self.screen)
+        finally:
+            config.apply_theme("night")
+            ui.clear_caches()
+
 
 # ---------------------------------------------------------------- 界面流程
 class GameFlowTestCase(unittest.TestCase):
