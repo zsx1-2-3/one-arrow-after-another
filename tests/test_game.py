@@ -33,10 +33,10 @@ import pygame  # noqa: E402
 
 import deshuffle_levels  # noqa: E402
 from game import anim, bgfx, config, scoring, ui  # noqa: E402
-from game.app import (HUD_HEART_GAP, HUD_HEART_SIZE, HUD_HEARTS_X,  # noqa: E402
-                      HUD_SCORE_LABEL_X, HUD_SCORE_VALUE_X,
-                      OVERLAY_ALL_CLEAR, OVERLAY_FAIL, OVERLAY_TUTORIAL_DONE,
-                      OVERLAY_WIN, SCENE_LEVELS, SCENE_MENU, SCENE_PLAY, Game)
+from game.app import (HUD_CLOCK_SIZE, HUD_HEART_GAP, HUD_HEART_SIZE,  # noqa: E402
+                      HUD_INFO_GAP, HUD_ROW_Y, OVERLAY_ALL_CLEAR, OVERLAY_FAIL,
+                      OVERLAY_TUTORIAL_DONE, OVERLAY_WIN, SCENE_LEVELS,
+                      SCENE_MENU, SCENE_PLAY, Game)
 from game.board import (CLICK_BLOCKED, CLICK_EMPTY, CLICK_FLY,  # noqa: E402
                         CLICK_IGNORED, STATE_CLEARED, STATE_FAILED,
                         STATE_PLAYING, Board, count_free_arrows, solve_level)
@@ -493,6 +493,7 @@ class ScoringTestCase(unittest.TestCase):
         self.assertLess(board.score, scoring.level_score(level, 4))
 
     def test_total_full_score_is_the_sum_of_all_levels(self):
+        """全部关卡的满分加起来等于总分上限（结算面板里的「总分 x / y」用它）。"""
         self.assertEqual(scoring.total_max_score(LEVELS),
                          sum(scoring.max_score(level) for level in LEVELS))
         self.assertGreater(scoring.total_max_score(LEVELS), 1000)
@@ -936,21 +937,31 @@ class GameFlowTestCase(unittest.TestCase):
         game.draw()
 
     def test_hud_has_room_for_the_widest_level(self):
-        """HUD 三组数字排得下：心最多的一关（7 颗）也不会顶到右边或压到得分。
+        """HUD 信息行排得下：最宽的一组内容（7 颗心 + 四位数得分）也不会越界。
 
-        生命值上限是按难度给的、最后一关有 7 颗心，最宽的一排心加上
-        「7 / 7」正好顶到得分那一栏就会糊成一片，所以这里用真实字宽量一遍。
-        （三个按钮在上一行，不和这行数字抢位置，所以只需守住窗口右边界。）
+        信息行现在是「计时 / 生命值 / 剩余箭头 / 得分」四组**自适应居中**排布，
+        所以量法也跟着换了：先按可能出现的最宽内容算出整行总宽，
+        再确认它居中之后两边都还留在窗口里。
+        心数从 LEVELS 里现取（谁的生命值上限最高就用谁），
+        不在测试里写死一个 5——否则以后改生命值表，这条测试就白写了。
         """
         widest = max(level.max_hp for level in LEVELS)
-        hearts_right = (HUD_HEARTS_X + widest * HUD_HEART_SIZE
-                        + (widest - 1) * HUD_HEART_GAP + 10
-                        + ui.text_width("%d / %d" % (widest, widest), size=15))
-        self.assertLess(hearts_right, HUD_SCORE_LABEL_X, "生命值压到得分那一栏了")
+        hearts_w = widest * HUD_HEART_SIZE + (widest - 1) * HUD_HEART_GAP
+        hp_w = hearts_w + 10 + ui.text_width("%d / %d" % (widest, widest), size=15)
+        clock_w = HUD_CLOCK_SIZE + 7 + ui.text_width("99:59", size=17, bold=True)
+        arrow_w = ui.text_width("剩余", size=15) + 8 + ui.text_width("999", size=22, bold=True)
+        score_w = (ui.text_width("得分", size=15) + 8
+                   + ui.text_width("9999", size=22, bold=True) + 7
+                   + ui.text_width("/ 9999", size=14))
 
-        score_right = (HUD_SCORE_VALUE_X + ui.text_width("9999", size=26, bold=True) + 8
-                       + ui.text_width("/ 9999", size=14))
-        self.assertLess(score_right, config.WINDOW_WIDTH - 24, "得分顶到窗口右边了")
+        total = clock_w + hp_w + arrow_w + score_w + HUD_INFO_GAP * 3
+        left = config.WINDOW_WIDTH // 2 - total // 2
+        self.assertGreater(left, 40, "信息行左边越界了")
+        self.assertLess(left + total, config.WINDOW_WIDTH - 40, "信息行右边越界了")
+
+        # 信息行往下就是提示条，再往下才是棋盘，别压到它们身上
+        self.assertLess(HUD_ROW_Y + 14, config.HUD_HEIGHT + config.HINT_BAR_HEIGHT,
+                        "信息行压到提示条上了")
 
     # ---------------------------------------------------------- T05
     def test_t05_fail_then_restart(self):
@@ -1217,6 +1228,166 @@ class GameFlowTestCase(unittest.TestCase):
                             "第 %d 关没有被记为通关" % (index + 1))
         self.assertEqual(game.overlay, OVERLAY_ALL_CLEAR)
 
+    # ---------------------------------------------------------- 计时 / 提示 / 辅助线
+    def test_play_clock_counts_up_and_resets_on_restart(self):
+        """计时从 0 开始、玩的时候往前走，重新开始要归零。
+
+        归零这一条是重点：重开之后还挂着上一把的时间，看着就像一个 bug。
+        """
+        self.unlock_all()
+        self.assertTrue(self.game.start_level(0))
+        self.assertEqual(self.game.elapsed, 0.0)
+
+        self.advance(2.0)
+        self.assertGreater(self.game.elapsed, 1.9, "玩了两秒计时还停在原地")
+
+        self.game.restart_level()
+        self.assertEqual(self.game.elapsed, 0.0, "重新开始后计时没有归零")
+
+    def test_play_clock_stops_once_the_level_is_over(self):
+        """本关分出胜负之后时钟就停住，不再往上涨。
+
+        否则玩家盯着结算面板读分数的那几秒也被算进用时，
+        再进下一关看统计就会觉得"我明明没花那么久"。
+        """
+        self.unlock_all()
+        self.assertTrue(self.game.start_level(0))
+        self.advance(1.0)
+        before = self.game.elapsed
+
+        for row, col in self.game.board.solution():      # 一边点一边推进动画
+            self.game.click_cell(row, col)
+            self.advance(0.5)
+        self.assertEqual(self.game.board.state, STATE_CLEARED)
+        frozen = self.game.elapsed
+        self.assertGreater(frozen, before, "通关过程里计时没有走过")
+
+        self.advance(1.0)                                 # 结果面板弹出前后都在推进
+        self.assertAlmostEqual(self.game.elapsed, frozen, places=3,
+                               msg="本关结束之后计时还在走")
+
+    def test_clock_text_formats_minutes_and_hours(self):
+        """计时文本：MM:SS；超过一小时进位成 H:MM:SS，不会显示成 62:05。"""
+        self.game.elapsed = 0.0
+        self.assertEqual(self.game.time_text(), "00:00")
+        self.game.elapsed = 65.4
+        self.assertEqual(self.game.time_text(), "01:05")
+        self.game.elapsed = 3725.0
+        self.assertEqual(self.game.time_text(), "1:02:05")
+
+    def test_hint_picks_an_arrow_that_can_really_fly(self):
+        """提示高亮的那一支，必须是当下真的能飞出去的箭头、而且是最优的那一支。
+
+        这是提示功能的核心承诺：给出的建议得能照做。所以除了「能飞」，
+        还要拿它和暴力枚举出来的答案对一遍——
+        提示挑的应该是「消掉它之后能解锁最多其它箭头」的那一支。
+        """
+        self.unlock_all()
+        self.assertTrue(self.game.start_level(0))
+        self.assertIsNone(self.game.hint_cell, "还没点提示就有高亮了")
+
+        self.game.use_hint()
+        self.assertIsNotNone(self.game.hint_cell)
+        row, col = self.game.hint_cell
+        self.assertTrue(self.game.board.can_fly(row, col),
+                        "提示指了一支飞不出去的箭头")
+
+        board = self.game.board
+        best_gain, best_cell = -1, None
+        for arrow in board.available_arrows():
+            board.grid[arrow.row][arrow.col] = None      # 暴力枚举：假装消掉它
+            gain = len(board.available_arrows())
+            board.grid[arrow.row][arrow.col] = arrow
+            if gain > best_gain:
+                best_gain, best_cell = gain, (arrow.row, arrow.col)
+        self.assertEqual(self.game.hint_cell, best_cell,
+                         "提示挑的不是「解锁最多」的那一支")
+
+    def test_hint_ring_fades_away_by_itself(self):
+        """提示环到时间自己消失，不会一直挂在棋盘上。
+
+        一直亮着会让玩家以为那一格有什么特殊状态，
+        而且他会盯着那一格反复点。
+        """
+        self.unlock_all()
+        self.assertTrue(self.game.start_level(0))
+        self.game.use_hint()
+        self.assertIsNotNone(self.game.hint_cell)
+
+        self.advance(config.HINT_DURATION + 0.2)
+        self.assertIsNone(self.game.hint_cell, "提示环到时间了还挂在棋盘上")
+        self.assertEqual(self.game.hint_timer, 0.0)
+        self.game.draw()                                  # 没有提示环时也要画得出来
+
+    def test_hint_when_nothing_can_fly_gives_a_message(self):
+        """一开局就没有能飞的箭头时，提示按钮不能崩，要给一句话。"""
+        self.unlock_all()
+        self.game.enter_play(make_level((">v", "^<")), 0)   # 四支箭头互相挡死
+        self.assertEqual(self.game.board.available_arrows(), [])
+        self.game.use_hint()
+        self.assertIsNone(self.game.hint_cell)
+        self.assertIn("没有", self.game.toast_text)
+
+    def test_guides_toggle_keeps_the_button_in_sync(self):
+        """辅助线开关：状态、按钮上的 on 标记、渲染三者要一致。"""
+        self.unlock_all()
+        self.assertTrue(self.game.start_level(0))
+        self.assertFalse(self.game.show_guides)
+        self.assertFalse(self.guide_button().on)
+
+        self.game.toggle_guides()
+        self.assertTrue(self.game.show_guides)
+        self.assertTrue(self.guide_button().on, "开关打开了，按钮却没亮")
+
+        self.game.toast_timer = 0.0
+        self.game.draw()                                  # 开着辅助线也要画得出来
+
+        self.game.toggle_guides()
+        self.assertFalse(self.game.show_guides)
+        self.assertFalse(self.guide_button().on)
+
+    def test_guides_survive_a_restart(self):
+        """辅助线是玩家偏好：重开本关不该把它关掉。"""
+        self.unlock_all()
+        self.assertTrue(self.game.start_level(0))
+        self.game.toggle_guides()
+        self.game.restart_level()
+        self.assertTrue(self.game.show_guides, "重开一关把辅助线设置弄丢了")
+
+    def guide_button(self):
+        """从当前按钮列表里取出「辅助线」那个圆钮。"""
+        for button in self.game.buttons:
+            if getattr(button, "label_below", "") == "辅助线":
+                return button
+        self.fail("按钮列表里找不到「辅助线」圆钮")
+
+    def test_play_layout_areas_do_not_overlap(self):
+        """游戏界面那几块区域不许互相压住：信息栏 / 提示条 / 棋盘 / 工具栏。
+
+        这一版改了信息栏高度、加了提示条与底部工具栏，四个边界分别写在
+        四个常量里，随便动一个都可能让棋盘压到工具栏上。这里按实际矩形算一遍，
+        比对着截图看靠谱——棋盘是居中的，出问题时常常只差几个像素。
+        """
+        self.unlock_all()
+        hint_bottom = config.HUD_HEIGHT + config.HINT_BAR_HEIGHT
+        toolbar_top = config.WINDOW_HEIGHT - config.TOOLBAR_HEIGHT
+        self.assertLess(hint_bottom, toolbar_top, "提示条已经压到工具栏上了")
+
+        for index in range(TOTAL_LEVELS):
+            self.assertTrue(self.game.start_level(index), "第 %d 关进不去" % (index + 1))
+            rect = self.game.board_rect
+            self.assertGreater(rect.top, hint_bottom,
+                               "第 %d 关的棋盘顶到提示条上了" % (index + 1))
+            self.assertLess(rect.bottom, toolbar_top,
+                            "第 %d 关的棋盘压到工具栏上了" % (index + 1))
+            self.assertGreater(rect.left, 0)
+            self.assertLess(rect.right, config.WINDOW_WIDTH)
+
+        # 教学关底部多一条讲解条，棋盘得更靠上，同样不许压住
+        self.game.start_tutorial()
+        self.assertLess(self.game.board_rect.bottom, self.game.tutorial_bar_rect.top,
+                        "教学关的棋盘压到讲解条上了")
+
 
 class VisualVarietyTestCase(unittest.TestCase):
     """画面观感的回归：箭头配色要打散、文字折行要守中文排版规则、背景要真的在动。
@@ -1314,35 +1485,46 @@ class VisualVarietyTestCase(unittest.TestCase):
                                          % (text, width, line[0]))
 
     def test_background_actually_moves(self):
-        """背景要真的在动：星点会上飘，时间推进后画面像素确实变了。"""
+        """背景要真的在动：时间推进之后，整屏像素确实变了。
+
+        这一版按参考图关掉了星点和流星（config.BG_STAR_COUNT = 0），
+        画面里唯一会动的就是那两团漂移光晕，所以这里量的是**整屏像素**，
+        而不是某个具体对象的坐标——以后背景元素再换，这条测试也不用改。
+        另外顺手确认星点数量跟着配置走：配置成 0 时不该有东西冒出来。
+        """
         surface = pygame.display.get_surface()
         background = bgfx.Background((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
-        before = [star["y"] for star in background.stars]
-
-        for _ in range(120):
-            background.update(FRAME)
-        after = [star["y"] for star in background.stars]
-        self.assertTrue(any(a < b for a, b in zip(after, before)),
-                        "推进 2 秒后没有任何星点移动")
+        self.assertEqual(background.star_count, config.BG_STAR_COUNT)
 
         background.draw(surface)
         first = pygame.image.tobytes(surface, "RGB")
+
         for _ in range(180):
             background.update(FRAME)
         background.draw(surface)
         second = pygame.image.tobytes(surface, "RGB")
         self.assertNotEqual(first, second, "过了 3 秒背景还是同一张画面")
 
-    def test_background_shows_a_shooting_star_sooner_or_later(self):
-        """流星按间隔出现，不会一直不出现。"""
-        background = bgfx.Background((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
-        seen = False
-        for _ in range(int(config.BG_SHOOT_INTERVAL[1] / FRAME) + 120):
-            background.update(FRAME)
-            if background.shooting is not None:
-                seen = True
-                break
-        self.assertTrue(seen, "等了 %d 秒都没等到流星" % config.BG_SHOOT_INTERVAL[1])
+    def test_background_can_still_spawn_a_shooting_star(self):
+        """流星机制没烂掉：把间隔调短之后，它确实会被触发。
+
+        这一版按参考图把流星关掉了（配置里的间隔是 999 秒，等于不出现），
+        但代码还在。测试不能傻等 999 秒，所以这里**临时**把间隔改小来验证，
+        跑完立刻还原——这样以后想重新打开流星，这条测试是现成的。
+        """
+        original = config.BG_SHOOT_INTERVAL
+        config.BG_SHOOT_INTERVAL = (0.1, 0.2)
+        try:
+            background = bgfx.Background((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
+            seen = False
+            for _ in range(int(0.6 / FRAME) + 60):
+                background.update(FRAME)
+                if background.shooting is not None:
+                    seen = True
+                    break
+            self.assertTrue(seen, "间隔都调到 0.2 秒了还没出现流星")
+        finally:
+            config.BG_SHOOT_INTERVAL = original
 
     def test_every_scene_renders_with_background(self):
         """三个场景都要能带着动态背景正常画出来。"""
