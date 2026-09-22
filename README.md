@@ -182,6 +182,19 @@ python tools/pick_levels.py                                       # 从候选里
 生成器用「逆向构造法」保证布局**必然可解**；`pick_levels.py` 再从同一尺寸的候选里
 挑「开局可点数达标 + 朝向最均衡 + 铺满率最高」的那一版。详见文件开头的说明。
 
+### 8. 导出「博客园版」博客（可选）
+
+```bash
+python tools/make_blog_for_cnblogs.py            # -> docs/blog-cnblogs.md
+python tools/make_blog_for_cnblogs.py --check    # 只体检：图名对不对、路径换干净没
+python tools/make_blog_for_cnblogs.py --host cdn # 换一条 CDN 线路（gcore/cdn/fastly/raw）
+```
+
+`docs/blog.md` 里的 17 张图用的是相对路径（`../assets/xxx.png`），在 GitHub 上正常，
+但**粘进博客园只会得到 17 个破图**——博客园解析不了「上一级目录」。
+这个脚本正文一字不动、只把图片地址换成 jsDelivr 绝对外链，
+产出 `docs/blog-cnblogs.md`，交作业时粘那一份。写完上面几个脚本后重跑一次即可。
+
 ---
 
 ## 五、游戏操作说明
@@ -269,6 +282,7 @@ one-arrow-after-another/
 │   └── shot-01 ~ shot-16.png
 ├── docs/
 │   ├── blog.md               # 作业博客：AIGC 使用记录 + 测试记录 + PSP
+│   ├── blog-cnblogs.md       # 上者的「博客园版」，由 tools/make_blog_for_cnblogs.py 生成
 │   └── test-report.md        # 测试与关卡校验的完整结果
 ├── game/                     # 游戏源码（逻辑与界面分离）
 │   ├── config.py             # 全局配置：窗口、布局、两套主题配色、字体、动画参数
@@ -288,9 +302,10 @@ one-arrow-after-another/
 │   ├── _showcase.py          # 截图/动图共用的「取景」策略（按状态找目标、临时存档）
 │   ├── make_screenshots.py   # 无头模式批量截图脚本
 │   ├── make_demo_gif.py      # 无头模式录制演示 GIF
+│   ├── make_blog_for_cnblogs.py  # 把博客的图片换成绝对外链，产出可粘贴到博客园的版本
 │   └── sync_test_log.py      # 把 test-report 里的「完整测试日志」块与真实用例同步
 └── tests/
-    └── test_game.py          # 自动化测试（240 个用例）
+    └── test_game.py          # 自动化测试（246 个用例）
 ```
 
 ### 代码设计要点
@@ -430,15 +445,15 @@ def highest_unlocked(self, total):
 
 难度分按 `箭头数 × 1.6 + 棋盘格数 × 0.12 − 开局可点数 × 3.0` 计算，
 再按阈值 `(<35, <55, <75, <100, 其余)` 映射成 1~5 颗星。
-九个关卡的难度分是 29.2 / 29.8 / 34.0 / 52.3 / 55.7 / 83.8 / 88.4 / 97.7 / 111.8，
-映射成 1/1/1/2/3/4/4/4/5 星，一路单调递增，测试里有一条用例卡着这个阶梯。
+九个关卡的难度分是 27.6 / 32.8 / 37.0 / 52.3 / 55.7 / 77.8 / 85.4 / 103.7 / 114.8，
+映射成 1/1/2/2/3/4/4/5/5 星，一路单调递增，测试里有一条用例卡着这个阶梯。
 完整的布局图与参考通关顺序见 `docs/test-report.md`。
 
 ---
 
 ## 八、测试结果
 
-`python tests/test_game.py` 共 **240 个用例全部通过**，覆盖作业要求的 T01–T06：
+`python tests/test_game.py` 共 **246 个用例全部通过**，覆盖作业要求的 T01–T06：
 
 | 编号 | 测试内容 | 预期结果 | 实际结果 |
 | --- | --- | --- | --- |
@@ -449,7 +464,7 @@ def highest_unlocked(self, total):
 | T05 | 生命值耗尽 | 显示失败并允许重新开始 | ✅ 通过 |
 | T06 | 游戏进行中重新开始 | 箭头布局和生命值恢复 | ✅ 通过 |
 
-测试分成十一组：
+测试分成十二组：
 
 | 测试类 | 覆盖内容 |
 | --- | --- |
@@ -462,6 +477,7 @@ def highest_unlocked(self, total):
 | `RopeCurveTestCase` | 折线拐弯圆滑成绳子曲线、C/S 形判定、蛇形箭生成仍合法可解 |
 | `AnimationTestCase` | 整条箭头沿路径飞出（时长随弧长伸缩）、撞击抖动、飘字与心碎的生命周期 |
 | `BackgroundTestCase` | 四层背景动效：光带下沉会绕回、端头不落到画面里、亮度分档缓存不涨、浮尘上浮回绕、流星按计时出现又收掉、游戏界面比菜单收敛、日间改做云影、数量写 0 真的关掉 |
+| `BlogExportTestCase` | 博客园版导出：17 张图都对得上 `assets/` 里的文件、导出后不留相对路径、正文一字未改、能切换 CDN 线路、缺文件会报错、仓库里那份导出件必须是最新的 |
 | `GameFlowTestCase` | 完整流程、场景渲染、开始界面排版、总览交互、教学引导、9 关顺序通关、计时 / 提示 / 辅助线 / 缩放平移、界面三块分区不重叠、辅助线几何（`guide_segment` 与被挡路径共线且落在挡路那一格内、箭头飞走后消失） |
 | `VisualVarietyTestCase` | 相邻箭头不同色、日夜间主题两套配色都完整、箭头与箭头造型、背景元素 |
 
@@ -476,8 +492,8 @@ def highest_unlocked(self, total):
 ## 九、AIGC 使用说明
 
 本项目使用 AIGC 工具辅助完成需求拆解、代码编写、Bug 排查、关卡批量生成与测试用例设计。
-开发过程中 **23 次具有代表性的 AIGC 协作**（提出了什么要求、AI 给了什么、实际效果如何、
-人工做了哪些修改）记录在 [`docs/blog.md`](docs/blog.md)，其中 20 次展开成了完整记录。
+开发过程中 **25 次具有代表性的 AIGC 协作**（提出了什么要求、AI 给了什么、实际效果如何、
+人工做了哪些修改）记录在 [`docs/blog.md`](docs/blog.md)，其中 22 次展开成了完整记录。
 
 几个真实的「AI 写错、人改对」的例子：
 
@@ -536,3 +552,10 @@ Linux 下可先安装字体：`sudo apt install fonts-wqy-zenhei`。
 **Q9：用了「提示」会不会影响得分或者留下记录？**
 不会。提示和辅助线只是看棋盘的工具，既不扣分也不改存档，
 用多少次都不影响本关能拿的分数。
+
+**Q10：博客粘到博客园，图片全变成破图了？**
+`docs/blog.md` 里的 17 张图用的是相对路径（`../assets/xxx.png`），
+只在 GitHub 上有效——博客园解析不了「上一级目录」。
+交作业时请粘 **`docs/blog-cnblogs.md`**：它由 `python tools/make_blog_for_cnblogs.py` 生成，
+正文一字不差，只把图片地址换成 jsDelivr 的绝对外链。
+某条 CDN 线路慢的话用 `--host cdn` / `--host fastly` 换一条重新生成。

@@ -26,6 +26,7 @@ import json
 import math
 import os
 import random
+import re
 import shutil
 import sys
 import tempfile
@@ -46,6 +47,7 @@ if TOOLS not in sys.path:
 import pygame  # noqa: E402
 
 import generate_levels as tools_generate  # noqa: E402
+import make_blog_for_cnblogs as tools_blog  # noqa: E402
 from game import anim, bgfx, config, levels, pieces, scoring, ui  # noqa: E402
 from game.app import (MENU_PRIMARY_Y, MENU_PROGRESS_Y, MENU_ROW_Y,  # noqa: E402
                       MENU_SUBTITLE_Y, MENU_TITLE_Y, OVERLAY_ALL_CLEAR,
@@ -2483,6 +2485,59 @@ class VisualVarietyTestCase(unittest.TestCase):
         self.game.draw()
         self.assertEqual((self.game.board.remaining, self.game.board.hp,
                           self.game.board.state), snapshot)
+
+
+class BlogExportTestCase(unittest.TestCase):
+    """博客园版博客的导出：图片必须是能打开的绝对外链。
+
+    盯这件事的原因很实在：blog.md 里的图片是相对路径（`../assets/xxx.png`），
+    在 GitHub 上点开没问题，粘到博客园就是 17 个破图占位——
+    博客园那台服务器不认识「../assets」。所以导出脚本负责把地址换成 CDN 外链，
+    这几条用例钉住「换干净了」「图名没写错」「正文没被动过」。
+    """
+
+    def setUp(self):
+        with open(os.path.join(ROOT, "docs", "blog.md"), encoding="utf-8") as f:
+            self.source = f.read()
+
+    def test_every_image_maps_to_a_real_file(self):
+        names = tools_blog.local_images(self.source)
+        self.assertEqual(len(names), 17, "正文里的图片数量变了")
+        for name in names:
+            self.assertTrue(os.path.exists(os.path.join(ROOT, "assets", name)),
+                            "assets/ 里没有 %s" % name)
+
+    def test_export_has_no_relative_path_left(self):
+        """正文里可以**提到**相对路径（记录 22 就在解释这个坑），
+        但不能再有「图片链接」是相对路径——这里只认 `](…/assets/x.png)` 这种形状。"""
+        text = tools_blog.convert(self.source)
+        self.assertEqual(tools_blog.local_images(text), [],
+                         "还有相对路径的图片没换掉")
+        self.assertEqual(len(re.findall(r"\]\(https://", text)),
+                         len(tools_blog.local_images(self.source)))
+
+    def test_export_keeps_the_body_untouched(self):
+        text = tools_blog.convert(self.source)
+        restored = re.sub(r"\]\(https://[^)]*/assets/([^)]+)\)", r"](../assets/\1)", text)
+        self.assertEqual(restored, self.source)
+
+    def test_host_can_be_switched(self):
+        self.assertIn("jsdelivr", tools_blog.asset_url("a.png", "fastly"))
+        self.assertIn("raw.githubusercontent", tools_blog.asset_url("a.png", "raw"))
+        with self.assertRaises(ValueError):
+            tools_blog.asset_url("a.png", "不存在的线路")
+
+    def test_check_reports_a_missing_asset(self):
+        self.assertEqual(tools_blog.check(self.source), [])
+        broken = self.source.replace("../assets/demo.gif", "../assets/demo-没这个文件.gif")
+        self.assertTrue(tools_blog.check(broken))
+
+    def test_generated_file_on_disk_is_up_to_date(self):
+        """仓库里那份 blog-cnblogs.md 必须和脚本现在生成的一致，别改了 blog.md 忘了重生成。"""
+        path = os.path.join(ROOT, "docs", "blog-cnblogs.md")
+        with open(path, encoding="utf-8") as f:
+            on_disk = f.read()
+        self.assertEqual(on_disk, tools_blog.build())
 
 
 def main():

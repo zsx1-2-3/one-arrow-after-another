@@ -1,3 +1,4 @@
+<!-- 本文件由 tools/make_blog_for_cnblogs.py 自动生成：图片换成 jsDelivr 外链，正文与 docs/blog.md 一字不差。要改内容请改 docs/blog.md，再重新生成这个文件。 -->
 # 用 AIGC 从零写一个「一箭又一箭」小游戏 —— 软件工程第二次个人作业
 
 | 项目 | 内容 |
@@ -18,7 +19,7 @@
 
 ### 1.1 演示动画
 
-![游戏演示](../assets/demo.gif)
+![游戏演示](https://gcore.jsdelivr.net/gh/zsx1-2-3/one-arrow-after-another@main/assets/demo.gif)
 
 这段 GIF 是全自动录制的（`tools/make_demo_gif.py`，408×528、161 帧、约 16 秒、3.7 MB）：
 悬停看路径 → 开辅助线、点一次提示 → 点错丢一颗心 → 点对了**整条箭头**飞出去 →
@@ -27,7 +28,7 @@
 
 ### 1.2 开始界面
 
-![开始界面](../assets/shot-01-menu.png)
+![开始界面](https://gcore.jsdelivr.net/gh/zsx1-2-3/one-arrow-after-another@main/assets/shot-01-menu.png)
 
 这一版把原来的「玩法说明」卡片整块删掉了：标题下面只剩一行进度和两种按钮，
 留白多了，主按钮也终于显眼。规则不再挤在菜单上念——交给教学关一步步演示，
@@ -38,7 +39,7 @@
 
 ### 1.3 关卡总览
 
-![关卡总览](../assets/shot-02-levels.png)
+![关卡总览](https://gcore.jsdelivr.net/gh/zsx1-2-3/one-arrow-after-another@main/assets/shot-02-levels.png)
 
 9 个正式关卡排成 3×3。每张卡片显示关卡号、名称、棋盘规模、箭头数、生命值上限和难度星级，
 状态用三种视觉区分：**已通关**（绿底 + 对勾，显示历史最高分）、
@@ -46,11 +47,11 @@
 
 点锁着的卡片不会开局，而是弹一句提示：
 
-![未解锁提示](../assets/shot-03-level-locked.png)
+![未解锁提示](https://gcore.jsdelivr.net/gh/zsx1-2-3/one-arrow-after-another@main/assets/shot-03-level-locked.png)
 
 ### 1.4 教学关
 
-![教学关](../assets/shot-04-tutorial.png)
+![教学关](https://gcore.jsdelivr.net/gh/zsx1-2-3/one-arrow-after-another@main/assets/shot-04-tutorial.png)
 
 教学关是**独立入口**，不在 9 关的编号里。当前该点哪支箭头会套一圈呼吸的黄色高亮环，
 底部有一条讲解条写清「为什么点这一支」，右上角显示「教学 2 / 4」的进度。
@@ -59,7 +60,7 @@
 
 | 悬停：前方被挡住（红） | 悬停：前方畅通（绿） |
 | :---: | :---: |
-| ![被挡住](../assets/shot-05-hover-blocked.png) | ![畅通](../assets/shot-06-hover-clear.png) |
+| ![被挡住](https://gcore.jsdelivr.net/gh/zsx1-2-3/one-arrow-after-another@main/assets/shot-05-hover-blocked.png) | ![畅通](https://gcore.jsdelivr.net/gh/zsx1-2-3/one-arrow-after-another@main/assets/shot-06-hover-clear.png) |
 
 上面两张图拍的是**同一局面**，差别只在「箭头前方通不通」——放在一起才看得出红绿各代表什么。
 
@@ -70,7 +71,7 @@
 
 | 点错了：撞击 + 掉一颗心 | 点对了：整条箭头飞出棋盘 |
 | :---: | :---: |
-| ![撞击反馈](../assets/shot-07-collision.png) | ![飞出动画](../assets/shot-08-flyout.png) |
+| ![撞击反馈](https://gcore.jsdelivr.net/gh/zsx1-2-3/one-arrow-after-another@main/assets/shot-07-collision.png) | ![飞出动画](https://gcore.jsdelivr.net/gh/zsx1-2-3/one-arrow-after-another@main/assets/shot-08-flyout.png) |
 
 点错的时候，箭头会前冲一下再弹回、抖动、泛红，同时**一颗碎掉的像素心往上飘**，
 信息栏上的生命值从实心变成只有轮廓，得分数字也会立刻往下掉。
@@ -79,16 +80,16 @@
 
 | 通关（含本关得分） | 失败 |
 | :---: | :---: |
-| ![通关](../assets/shot-09-win.png) | ![失败](../assets/shot-10-fail.png) |
+| ![通关](https://gcore.jsdelivr.net/gh/zsx1-2-3/one-arrow-after-another@main/assets/shot-09-win.png) | ![失败](https://gcore.jsdelivr.net/gh/zsx1-2-3/one-arrow-after-another@main/assets/shot-10-fail.png) |
 
 通关面板会写清「为什么是这个分数」：零失误时写「额外 +300 分完美奖励」，
 有失误时直接写算式 `得分 = 900 × 5 ÷ 6`，玩家能自己核对，不会怀疑算错。
 
-![全部通关](../assets/shot-11-all-clear.png)
+![全部通关](https://gcore.jsdelivr.net/gh/zsx1-2-3/one-arrow-after-another@main/assets/shot-11-all-clear.png)
 
 ### 1.7 最难的一关
 
-![第 9 关](../assets/shot-12-final-level.png)
+![第 9 关](https://gcore.jsdelivr.net/gh/zsx1-2-3/one-arrow-after-another@main/assets/shot-12-final-level.png)
 
 第 9 关「万箭归一」：**26×18** 的棋盘铺了 **46 支箭头**，占格率 0.92，
 长短从 **1 格到 18 格**不等，开局有 **6 支**能直接飞出去——
@@ -98,11 +99,11 @@
 
 | 提示：高亮最值得先点的那一支 | 辅助线：画出每支箭头的去路 |
 | :---: | :---: |
-| ![提示](../assets/shot-13-hint.png) | ![辅助线](../assets/shot-14-guides.png) |
+| ![提示](https://gcore.jsdelivr.net/gh/zsx1-2-3/one-arrow-after-another@main/assets/shot-13-hint.png) | ![辅助线](https://gcore.jsdelivr.net/gh/zsx1-2-3/one-arrow-after-another@main/assets/shot-14-guides.png) |
 
 | 放大 + 拖动（180% 看边角） | 日间主题 + 设置面板 |
 | :---: | :---: |
-| ![放大](../assets/shot-15-zoomed.png) | ![设置](../assets/shot-16-settings-day.png) |
+| ![放大](https://gcore.jsdelivr.net/gh/zsx1-2-3/one-arrow-after-another@main/assets/shot-15-zoomed.png) | ![设置](https://gcore.jsdelivr.net/gh/zsx1-2-3/one-arrow-after-another@main/assets/shot-16-settings-day.png) |
 
 * **提示**（底栏左）：自动在「现在能飞出去的箭头」里挑一支**消掉之后能连带解锁最多其它箭头**的，
   套上一圈呼吸的青绿高亮环，几秒后自己消失。用青绿而不是教学关的黄色，是因为
