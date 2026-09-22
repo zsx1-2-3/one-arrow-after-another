@@ -39,16 +39,16 @@ OK
 
 | 测试类 | 用例数 | 覆盖内容 |
 | --- | --- | --- |
-| `BoardRuleTestCase` | 45 | 管道写法解析与格式化、布局校验、相邻不同色、单次点击的规则判定（T01~T03）、边界、生命值、复位 |
+| `BoardRuleTestCase` | 45 | 箭头写法解析与格式化、布局校验、相邻不同色、单次点击的规则判定（T01~T03）、边界、生命值、复位 |
 | `SolverTestCase` | 7 | 贪心求解器、单调性、无解布局判定、开局可点数统计 |
 | `LevelBalanceTestCase` | 19 | 9 关的可解性、竖屏尺寸、铺满率与可点数阶梯、难度与星级、生命值表、满分、教学关数据 |
 | `ScoringTestCase` | 9 | 得分公式、完美奖励、失败 0 分、总分上限、单调性 |
 | `ProgressTestCase` | 12 | 解锁规则、跳关不算解锁、存档读写与容错、最高分、全通关 |
-| `RenderPrimitiveTestCase` | 25 | 管道贴图缓存与几何、中文折行、滑杆取值、图标与像素心 |
-| `AnimationTestCase` | 11 | 整条管道飞出、撞击抖动与泛红、飘字、心碎 |
+| `RenderPrimitiveTestCase` | 25 | 箭头贴图缓存与几何、中文折行、滑杆取值、图标与像素心 |
+| `AnimationTestCase` | 11 | 整条箭头飞出、撞击抖动与泛红、飘字、心碎 |
 | `BackgroundTestCase` | 2 | 三个场景带背景渲染、背景跟随主题 |
 | `GameFlowTestCase` | 83 | 场景切换、关卡总览、解锁链路、教学引导、T04~T06、结算面板、计时 / 提示 / 辅助线 / 缩放平移、界面分区、键盘快捷键 |
-| `VisualVarietyTestCase` | 9 | 相邻管道不同色、配色来自调色板、各关渲染、悬停高亮、渲染不改棋盘 |
+| `VisualVarietyTestCase` | 9 | 相邻箭头不同色、配色来自调色板、各关渲染、悬停高亮、渲染不改棋盘 |
 
 > 用例数是从 `tests/test_game.py` 里现数的（按 `def test_` 前缀统计），
 > 不是沿用上一版的数字——项目每加一轮功能，这个数就会变。
@@ -59,12 +59,12 @@ OK
 
 | 编号 | 测试内容 | 预期结果 | 实际结果 |
 | --- | --- | --- | --- |
-| T01 | 点击前方无阻挡的管道 | 整条管道飞出棋盘并消失 | ✅ 通过 |
-| T02 | 点击前方有阻挡的管道 | 管道不消失，失误次数减 1 | ✅ 通过 |
-| T03 | 点击位于边缘且朝向棋盘外的管道 | 管道正常消失，不发生越界错误 | ✅ 通过 |
-| T04 | 消除本关全部管道 | 显示通关并进入下一关 | ✅ 通过 |
+| T01 | 点击前方无阻挡的箭头 | 整条箭头飞出棋盘并消失 | ✅ 通过 |
+| T02 | 点击前方有阻挡的箭头 | 箭头不消失，失误次数减 1 | ✅ 通过 |
+| T03 | 点击位于边缘且朝向棋盘外的箭头 | 箭头正常消失，不发生越界错误 | ✅ 通过 |
+| T04 | 消除本关全部箭头 | 显示通关并进入下一关 | ✅ 通过 |
 | T05 | 失误次数耗尽 | 显示失败并允许重新开始 | ✅ 通过 |
-| T06 | 游戏进行中重新开始 | 管道布局和失误次数恢复 | ✅ 通过 |
+| T06 | 游戏进行中重新开始 | 箭头布局和失误次数恢复 | ✅ 通过 |
 
 > 说明：本作的「失误次数」做成了**生命值**（用像素心表示，点错一次丢一颗心），
 > 判定逻辑与作业要求完全一致，只是换了一个更直观的呈现方式和更自然的字段语义。
@@ -72,32 +72,32 @@ OK
 ### 每个用例的具体做法
 
 * **T01**（`test_t01_free_piece_flies_out_and_disappears`）：在测试关卡点击 `(2,3)` 那支
-  竖着、箭头朝下的管道（下方一路空到盘外），断言返回 `fly`、被点的正是这一支、没有阻挡者、
-  该格变空、剩余管道 3 → 2、生命值仍为满、`history` 里留下了它。
-* **T02**（`test_t02_blocked_piece_loses_one_heart`）：点击 `(2,0)` 那支横躺、箭头朝右的管道
-  （正前方 `(2,3)` 被另一支的身子压住），断言返回 `blocked`、阻挡者是**整支管道**
-  `((2,3),(3,3),(4,3))`、管道仍在原位、剩余数不变、生命值 4 → 3。
+  竖着、箭头朝下的箭头（下方一路空到盘外），断言返回 `fly`、被点的正是这一支、没有阻挡者、
+  该格变空、剩余箭头 3 → 2、生命值仍为满、`history` 里留下了它。
+* **T02**（`test_t02_blocked_piece_loses_one_heart`）：点击 `(2,0)` 那支横躺、箭头朝右的箭头
+  （正前方 `(2,3)` 被另一支的身子压住），断言返回 `blocked`、阻挡者是**整支箭头**
+  `((2,3),(3,3),(4,3))`、箭头仍在原位、剩余数不变、生命值 4 → 3。
 
   同组还有两条：
-  * `test_t02_blocker_is_the_nearest_piece_on_the_ray`——射线上可能有好几支管道，
+  * `test_t02_blocker_is_the_nearest_piece_on_the_ray`——射线上可能有好几支箭头，
     挡住它的必须是**最先遇到**的那一支；而且挡路的通常是那支的**身子**，它的箭头在别处
     （这一例里挡路那支的头在 `(2,1)`，根本不在射线上）；断言 `path` 只到被占的那一格为止。
   * `test_t02_blocking_piece_moves_away_then_it_can_fly`——先把挡路的点掉，原本被挡的那支就能飞，
     这就是「连锁」的最小例子。
 * **T03**（`test_t03_pieces_at_edges_face_outward_and_can_fly`）：构造 4×5 的边界布局，
-  四条边上各一支朝向**棋盘外**的管道；逐个点击断言返回 `fly`，
+  四条边上各一支朝向**棋盘外**的箭头；逐个点击断言返回 `fly`，
   并断言 `ray()` 返回的坐标全部落在棋盘内（不会算出越界坐标），最后 `remaining` 归零、状态 `cleared`。
 * **T04**（`test_t04_clear_level_then_go_to_next_level`）：按求解器给出的顺序清空第 1 关 →
   断言 `state == cleared`、剩余为 0；推进到结果面板弹出 → 断言是「通关」面板、
   得分等于本关满分、零失误、已写入存档、下一关已解锁；
   再调用面板上的「下一关」（`next_level()`）→ 断言关卡序号 +1、棋盘已按新关卡重新初始化。
-* **T05**（`test_t05_fail_then_restart`）：反复点击一支被挡住的管道，直到生命值扣到 0 →
+* **T05**（`test_t05_fail_then_restart`）：反复点击一支被挡住的箭头，直到生命值扣到 0 →
   断言 `state == failed`；推进到结果面板弹出 → 断言是「失败」面板、本关 0 分、存档里也是 0；
   再点失败面板的主按钮「重新开始本关」（`restart_level()`）→ 断言状态回到进行中、
-  生命值回满、剩余管道数恢复、面板关闭。
+  生命值回满、剩余箭头数恢复、面板关闭。
 * **T06**（`test_t06_restart_mid_game`）：开局后先点掉一支能飞的（剩余数减少），
-  再故意点错一次（生命值 -1），确认两个数都已经变了 → 点「重新开始」→ 断言剩余管道数恢复为总数、
-  生命值回满、状态回到进行中、计时归零、动画列表清空，并且**逐个断言每支管道都回到了它原来的格子上**。
+  再故意点错一次（生命值 -1），确认两个数都已经变了 → 点「重新开始」→ 断言剩余箭头数恢复为总数、
+  生命值回满、状态回到进行中、计时归零、动画列表清空，并且**逐个断言每支箭头都回到了它原来的格子上**。
 
 > 六个用例的编号与命名是刻意对齐作业要求的：`test_t04_*` / `test_t05_*` / `test_t06_*`
 > 覆盖的就是作业表格里的第 4~6 项。规则层级（`BoardRuleTestCase`）里测「点到空格子」这类
@@ -109,7 +109,7 @@ OK
 
 除了作业要求的六条，核心玩法机制每一项都有对应用例兜底。
 
-### 4.1 管道模型与关卡数据
+### 4.1 箭头模型与关卡数据
 
 | 用例 | 验证内容 | 结果 |
 | --- | --- | --- |
@@ -125,25 +125,25 @@ OK
 | `test_piece_head_tail_and_length` | 头的定义是 `cells[-1]`、尾是 `cells[0]` | ✅ |
 | `test_piece_ray_stops_at_board_edge` | 射线只沿一个方向走，到边界为止 | ✅ |
 | `test_validate_layout_accepts_good_level` | 合法布局通过校验 | ✅ |
-| `test_validate_layout_rejects_empty_level` | 一支管道都没有的关卡直接报错 | ✅ |
-| `test_validate_layout_rejects_out_of_board` | 跑到棋盘外的管道直接报错 | ✅ |
-| `test_validate_layout_rejects_overlap` | 两支管道重叠在一格上直接报错 | ✅ |
+| `test_validate_layout_rejects_empty_level` | 一支箭头都没有的关卡直接报错 | ✅ |
+| `test_validate_layout_rejects_out_of_board` | 跑到棋盘外的箭头直接报错 | ✅ |
+| `test_validate_layout_rejects_overlap` | 两支箭头重叠在一格上直接报错 | ✅ |
 | `test_validate_layout_rejects_broken_path` | 路径不是逐格相邻直接报错 | ✅ |
 | `test_validate_layout_rejects_self_crossing` | 自己交叉的路径直接报错 | ✅ |
 | `test_validate_layout_rejects_head_direction_mismatch` | 最后一段和箭头方向不一致直接报错（否则箭头会歪在拐角上） | ✅ |
-| `test_validate_layout_rejects_piece_facing_own_body` | 箭头正对着自己的管道直接报错（这种永远飞不出去） | ✅ |
-| `test_faces_own_body_false_for_clean_shape` | 正常的拐弯管道不会被误判成「对着自己」 | ✅ |
+| `test_validate_layout_rejects_piece_facing_own_body` | 箭头正对着自己的箭头直接报错（这种永远飞不出去） | ✅ |
+| `test_faces_own_body_false_for_clean_shape` | 正常的拐弯箭头不会被误判成「对着自己」 | ✅ |
 | `test_build_grid_marks_owner_index` | 格子表里存的是「这一格属于第几支」 | ✅ |
-| `test_assign_colors_gives_every_piece_a_palette_color` | 每支管道都拿到了调色板里的颜色 | ✅ |
-| `test_adjacent_pieces_never_share_a_color` | 上下左右相邻的两支管道不许同色 | ✅ |
+| `test_assign_colors_gives_every_piece_a_palette_color` | 每支箭头都拿到了调色板里的颜色 | ✅ |
+| `test_adjacent_pieces_never_share_a_color` | 上下左右相邻的两支箭头不许同色 | ✅ |
 | `test_assign_colors_is_deterministic` | 同样的布局必须得到同样的配色 | ✅ |
-| `test_clicking_any_cell_of_a_pipe_selects_the_whole_pipe` | 点管道的哪一格都算选中它 | ✅ |
-| `test_find_blocker_ignores_the_pieces_own_body` | 管道绕回来贴着自己箭头前方时不算「被自己挡住」 | ✅ |
+| `test_clicking_any_cell_of_a_pipe_selects_the_whole_pipe` | 点箭头的哪一格都算选中它 | ✅ |
+| `test_find_blocker_ignores_the_pieces_own_body` | 箭头绕回来贴着自己箭头前方时不算「被自己挡住」 | ✅ |
 | `test_click_result_carries_the_ray_path` | 点击结果带上「箭头前方直到边界」的格子 | ✅ |
 | `test_path_to_blocker_stops_at_the_nearest_piece` | 红段只画到被占的那一格为止 | ✅ |
 | `test_path_to_blocker_returns_the_whole_ray_when_clear` | 通畅时返回整条射线 | ✅ |
 | `test_edge_ray_does_not_run_off_the_board` | 边上的射线不越界 | ✅ |
-| `test_ray_covers_corner_pieces_correctly` | 角落管道的射线正确 | ✅ |
+| `test_ray_covers_corner_pieces_correctly` | 角落箭头的射线正确 | ✅ |
 
 ### 4.2 求解器
 
@@ -191,18 +191,18 @@ OK
 | --- | --- | --- |
 | `test_level_count_and_names` | 标准关正好 9 关，编号次序正确 | ✅ |
 | `test_every_level_is_solvable` | 九个关卡都存在通关顺序 | ✅ |
-| `test_solution_covers_every_piece_exactly_once` | 参考顺序里每支管道恰好出现一次 | ✅ |
+| `test_solution_covers_every_piece_exactly_once` | 参考顺序里每支箭头恰好出现一次 | ✅ |
 | `test_boards_are_portrait` | 棋盘一律是**竖长方形**（行数 > 列数），贴合手机竖屏 | ✅ |
 | `test_board_size_grows_with_level_number` | 棋盘逐关变大，11×8 → 26×18 | ✅ |
-| `test_piece_count_grows_with_level_number` | 管道数逐关变多，21 → 46 | ✅ |
+| `test_piece_count_grows_with_level_number` | 箭头数逐关变多，21 → 46 | ✅ |
 | `test_boards_are_densely_filled` | 铺满率逐关不下降，且整体在 0.9 以上 | ✅ |
 | `test_free_pieces_never_increase` | 开局可点数整体不上升（7 → 3），难度不会被顺手改掉 | ✅ |
 | `test_difficulty_and_stars_never_go_backwards` | 难度分严格上升、星级单调不减 | ✅ |
-| `test_level_rejects_invalid_specs_at_construction` | 构造 `Level` 时就把非法管道写法拦下来 | ✅ |
+| `test_level_rejects_invalid_specs_at_construction` | 构造 `Level` 时就把非法箭头写法拦下来 | ✅ |
 | `test_level_rejects_zero_size` | 零尺寸的棋盘直接报错 | ✅ |
 | `test_tutorial_has_guided_steps` | 教学关必须带引导步骤，否则界面上没有任何提示 | ✅ |
 | `test_tutorial_steps_both_explain_ways` | 教学关的步骤既讲「被挡住」也讲「畅通能飞」 | ✅ |
-| `test_tutorial_is_solvable_and_small` | 教学关自己可解，而且足够小（3 支管道） | ✅ |
+| `test_tutorial_is_solvable_and_small` | 教学关自己可解，而且足够小（3 支箭头） | ✅ |
 | `test_report_shape` | `report_for` 产出的数据结构完整，报告脚本能直接用 | ✅ |
 
 ### 4.6 进度与解锁
@@ -228,7 +228,7 @@ OK
 | --- | --- | --- |
 | `test_timer_only_runs_while_playing` | 只在进行中走秒，结束 / 重开后停住、归零 | ✅ |
 | `test_hint_picks_a_piece_that_can_actually_fly` | 提示指的那一支必须真的能飞出 | ✅ |
-| `test_hint_prefers_unlocking_the_most_pieces` | 提示挑的是「消掉它最能解锁其它管道」的那一支 | ✅ |
+| `test_hint_prefers_unlocking_the_most_pieces` | 提示挑的是「消掉它最能解锁其它箭头」的那一支 | ✅ |
 | `test_hint_does_not_corrupt_the_board` | 算提示不会改棋盘状态 | ✅ |
 | `test_use_hint_sets_and_expires_the_highlight` | 提示环到时间自己消失，不会一直挂着 | ✅ |
 | `test_clicking_the_hinted_piece_clears_the_highlight` | 点了被提示的那支之后环立刻收掉 | ✅ |
@@ -237,7 +237,7 @@ OK
 | `test_guides_draw_for_every_level` | 九关都能开着辅助线正常画出来 | ✅ |
 | `test_guide_segment_is_parallel_to_the_arrow` | 辅助线必须沿箭头方向（叉积为 0），且长度与射线一致 | ✅ |
 | `test_guide_segment_ends_inside_the_blocking_cell` | 被挡时线的终点落在**射线上被占的那一格**里 | ✅ |
-| `test_guide_segment_disappears_with_the_piece` | 管道飞走之后它的辅助线也要消失 | ✅ |
+| `test_guide_segment_disappears_with_the_piece` | 箭头飞走之后它的辅助线也要消失 | ✅ |
 | `test_zoom_range_is_respected` / `test_zoom_by_moves_by_one_step` | 缩放范围 60%~180%，步进正确 | ✅ |
 | `test_zoom_is_rounded_to_two_decimals` | 反复缩放不会积累浮点误差 | ✅ |
 | `test_zoom_ratio_reports_current_position` / `test_slider_drag_sets_the_zoom` | 滑杆位置与缩放倍率双向一致 | ✅ |
@@ -247,25 +247,25 @@ OK
 | `test_board_never_leaves_the_viewport` | 拖动到极值也不会把棋盘拖出视口 | ✅ |
 | `test_small_board_is_centred` | 小棋盘居中显示，不贴着左上角 | ✅ |
 | `test_pan_is_clamped_back_into_range` | 平移量被夹回合法区间 | ✅ |
-| `test_zoom_sweep_keeps_the_piece_cache_bounded` | 反复缩放不会让管道贴图缓存无限增长 | ✅ |
+| `test_zoom_sweep_keeps_the_piece_cache_bounded` | 反复缩放不会让箭头贴图缓存无限增长 | ✅ |
 | `test_cell_rect_and_center_agree` / `test_cell_at_pos_round_trip` | 格子坐标 ↔ 像素坐标互为逆运算 | ✅ |
 | `test_cell_at_pos_outside_the_board_is_none` | 棋盘外取格返回 None | ✅ |
 
-**「提示」里的「最优」是怎么定义的。** 这个玩法有个性质：点掉一支能飞的管道，
-只会让其它管道的射线更空，不会把自己玩死。所以提示挑的是
-「消掉它之后能连带解锁最多其它管道」的那一支——第一步点对了，后面往往就顺了。
+**「提示」里的「最优」是怎么定义的。** 这个玩法有个性质：点掉一支能飞的箭头，
+只会让其它箭头的射线更空，不会把自己玩死。所以提示挑的是
+「消掉它之后能连带解锁最多其它箭头」的那一支——第一步点对了，后面往往就顺了。
 测试就直接拿这条定义去对：临时把候选从棋盘上摘掉、数一遍还剩几支能飞、再放回去，
 最后和 `Game.best_hint()` 给出的选择逐个比对。
 
 **辅助线为什么不按「能不能飞」上色。** 那条线只帮玩家看清方向关系；
 一旦畅通画绿、被挡画红，等于把答案画在脸上，这一局该有的思考就没了。
 所以两个状态用同一个颜色（`config.COLOR_GUIDE`），
-只有鼠标悬停某支管道时，才用绿 / 红两色高亮那一条具体路径。
+只有鼠标悬停某支箭头时，才用绿 / 红两色高亮那一条具体路径。
 
 **辅助线几何为什么单独抽出来测。** 早先画悬停 / 辅助线时是直接拿
-「挡路那支的**箭头**」（`blocker.head`）当终点的，可一支管道是好几格，
+「挡路那支的**箭头**」（`blocker.head`）当终点的，可一支箭头是好几格，
 压在射线上的往往是它的**身子**，箭头可能在很远的另一头——
-于是线会斜穿整个棋盘连到一个方向无关的格子上（悬停到这类管道上还会直接抛 `ValueError`）。
+于是线会斜穿整个棋盘连到一个方向无关的格子上（悬停到这类箭头上还会直接抛 `ValueError`）。
 现在抽成 `Game.guide_segment(piece)`，测试用叉积卡「必须共线」、
 用点积卡「长度与射线一致」、再用矩形包含卡「被挡时终点落在哪一格」，
 三条一起把这处几何钉住。
@@ -274,13 +274,13 @@ OK
 
 | 用例 | 验证内容 | 结果 |
 | --- | --- | --- |
-| `test_piece_surface_is_cached` / `test_clear_caches_drops_piece_surfaces` | 管道贴图有缓存，改配置时能清掉 | ✅ |
+| `test_piece_surface_is_cached` / `test_clear_caches_drops_piece_surfaces` | 箭头贴图有缓存，改配置时能清掉 | ✅ |
 | `test_piece_surface_differs_by_cell_size` | 不同格距得到不同尺寸的贴图 | ✅ |
 | `test_piece_surface_geometry_places_each_cell_correctly` | 贴图里每一格的位置都对得上 | ✅ |
-| `test_piece_surface_big_enough_for_the_whole_pipe` | 贴图装得下整条管道，拐弯也不会被裁掉 | ✅ |
+| `test_piece_surface_big_enough_for_the_whole_pipe` | 贴图装得下整条箭头，拐弯也不会被裁掉 | ✅ |
 | `test_piece_color_falls_back_to_palette` | 颜色缺失时回退到调色板，不崩 | ✅ |
 | `test_piece_surface_cache_stays_bounded` | 贴图缓存条数有上限 | ✅ |
-| `test_draw_piece_accepts_alpha_and_offset` | 管道绘制支持半透明与偏移（飞出动画要用） | ✅ |
+| `test_draw_piece_accepts_alpha_and_offset` | 箭头绘制支持半透明与偏移（飞出动画要用） | ✅ |
 | `test_wrap_text_respects_max_width` | 中文折行不超宽 | ✅ |
 | `test_wrap_text_never_starts_a_line_with_punctuation` | 折行后不允许有行以收尾标点开头 | ✅ |
 | `test_wrap_text_handles_short_and_empty_input` | 空串 / 极短文本不会死循环 | ✅ |
@@ -305,21 +305,21 @@ OK
 | 用例 | 验证内容 | 结果 |
 | --- | --- | --- |
 | `test_levels_use_a_variety_of_colors` | 一色到底太单调：每关用到的颜色种类要够多 | ✅ |
-| `test_colors_come_from_the_palette` | 管道颜色只可能来自那 12 色调色板 | ✅ |
+| `test_colors_come_from_the_palette` | 箭头颜色只可能来自那 12 色调色板 | ✅ |
 | `test_no_two_adjacent_pieces_share_a_color_in_any_level` | 所有关卡都守住「相邻不同色」 | ✅ |
 | `test_every_level_draws_and_saves` | 九关都能画出来并截图 | ✅ |
 | `test_every_level_draws_with_guides_and_hover` | 开着辅助线 + 悬停时也能画 | ✅ |
 | `test_every_level_draws_with_animations_running` | 有动画在跑时也能画 | ✅ |
-| `test_hover_highlight_works_on_any_cell_of_a_pipe` | 悬停管道的任何一格都能高亮整条 | ✅ |
+| `test_hover_highlight_works_on_any_cell_of_a_pipe` | 悬停箭头的任何一格都能高亮整条 | ✅ |
 | `test_hover_on_empty_cell_highlights_nothing` | 悬停空格不该亮任何东西 | ✅ |
 | `test_render_does_not_mutate_the_board` | 画一遍不能改棋盘状态——渲染和逻辑必须完全分开 | ✅ |
 | `test_background_follows_theme` / `test_every_scene_draws` | 背景跟随主题切换，三个场景都画得出来 | ✅ |
 
 **「去底格」的改动。** 新版棋盘不再画每一格的底框，只有一片极淡的点阵
-（`app.draw_board()`）。原因是这个玩法的难度来自「在一堆管道里找出能点的那支」，
+（`app.draw_board()`）。原因是这个玩法的难度来自「在一堆箭头里找出能点的那支」，
 而几十个空方框会让视线一直被拽住——那是「乱」不是「难」。
 
-**「相邻不同色」的改动。** 参照画面里同色的管道挨在一起会连成一片、看不出有几支，
+**「相邻不同色」的改动。** 参照画面里同色的箭头挨在一起会连成一片、看不出有几支，
 所以 `pieces.assign_colors` 用贪心给每支挑一个邻居没用过的颜色。
 注意这和上一版的方向色是两回事：**上一版**「一个方向一个颜色」（上=青绿 下=橙 左=紫 右=粉），
 **这一版**改成糖果色随机、只约束相邻不同色。测试也跟着换成三条：
@@ -345,7 +345,7 @@ OK
 | `test_toast_expires` | 提示气泡到时间自己消失 | ✅ |
 | `test_reset_progress_needs_two_clicks` | 「清空进度」要点两次才真的清，避免手滑 | ✅ |
 | `test_settings_overlay_opens_and_closes` / `test_theme_toggle_switches_and_returns` / `test_theme_toggle_works_in_every_scene` | 设置面板开关正常；夜间 / 日间能来回切，各场景都生效 | ✅ |
-| `test_drag_on_board_does_not_count_as_a_click` | 放大后拖动棋盘不会被误判成「点了那支管道」 | ✅ |
+| `test_drag_on_board_does_not_count_as_a_click` | 放大后拖动棋盘不会被误判成「点了那支箭头」 | ✅ |
 | `test_short_press_is_treated_as_a_click` / `test_tiny_mouse_jitter_still_counts_as_a_click` | 短按与轻微手抖仍然算点击 | ✅ |
 | `test_pressing_a_button_is_not_a_board_drag` / `test_pressing_the_viewport_targets_the_board` | 按在按钮上 / 按在视口上各自路由正确 | ✅ |
 | `test_slider_is_not_draggable_outside_a_level` | 不在关卡里时滑杆不响应 | ✅ |
@@ -369,27 +369,27 @@ test_floating_heart_splits_into_two_halves ... ok   「心碎」动画把整颗�
 test_floating_text_rises_and_ends ... ok
 test_fly_out_finishes_and_keeps_moving_away ... ok
 test_fly_out_respects_direction ... ok
-test_fly_out_tail_follows_the_bend ... ok   L 形管道：尾巴没过弯时沿第一段滑，过弯后沿箭头方向直线出视口。
+test_fly_out_tail_follows_the_bend ... ok   L 形箭头：尾巴没过弯时沿第一段滑，过弯后沿箭头方向直线出视口。
 test_impact_fades_out_and_ends ... ok
 test_impact_offset_moves_along_its_direction ... ok
 test_impact_tint_is_cached_per_level ... ok
-test_impact_tint_moves_toward_red ... ok   被撞的管道要真的泛红——这是「点错了」最直接的反馈。
+test_impact_tint_moves_toward_red ... ok   被撞的箭头要真的泛红——这是「点错了」最直接的反馈。
 test_background_follows_theme ... ok
 test_every_scene_draws ... ok
-test_adjacent_pieces_never_share_a_color ... ok   相邻管道同色会「糊成一片」，看不出是几支——所有关卡都要守住这条。
+test_adjacent_pieces_never_share_a_color ... ok   相邻箭头同色会「糊成一片」，看不出是几支——所有关卡都要守住这条。
 test_assign_colors_gives_every_piece_a_palette_color ... ok
 test_assign_colors_is_deterministic ... ok   同样的布局必须得到同样的配色，否则每次打开画面都不一样。
 test_build_grid_marks_owner_index ... ok
 test_clearing_every_piece_clears_the_level ... ok
 test_click_outside_board_is_ignored ... ok
 test_click_result_carries_the_ray_path ... ok   点击结果要带上「箭头前方直到边界」的格子，界面靠它画路径提示。
-test_clicking_any_cell_of_a_pipe_selects_the_whole_pipe ... ok   点管道的哪一格都算选中它——玩家看到的是整条管道。
+test_clicking_any_cell_of_a_pipe_selects_the_whole_pipe ... ok   点箭头的哪一格都算选中它——玩家看到的是整条箭头。
 test_clicking_empty_cell_does_nothing ... ok
 test_clicks_after_clearing_are_ignored ... ok
 test_clicks_after_failure_are_ignored ... ok
 test_edge_ray_does_not_run_off_the_board ... ok   边上的射线只到边界为止，不能越界算出负坐标或越界的格子。
 test_faces_own_body_false_for_clean_shape ... ok
-test_find_blocker_ignores_the_pieces_own_body ... ok   管道绕回来贴着自己的箭头前方时，不算「被自己挡住」。
+test_find_blocker_ignores_the_pieces_own_body ... ok   箭头绕回来贴着自己的箭头前方时，不算「被自己挡住」。
 test_format_piece_merges_repeated_steps ... ok
 test_format_piece_rejects_diagonal_step ... ok
 test_format_piece_round_trip ... ok   format_piece 是 parse_piece 的逆运算，生成器靠它打印布局。
@@ -410,7 +410,7 @@ test_running_out_of_hearts_fails_the_level ... ok
 test_score_drops_as_hearts_are_lost ... ok   棋盘上的 score 是「此刻通关能拿多少」，丢心就往下掉。
 test_t01_free_piece_flies_out_and_disappears ... ok
 test_t02_blocked_piece_loses_one_heart ... ok
-test_t02_blocker_is_the_nearest_piece_on_the_ray ... ok   射线上可能有好几支管道，挡住它的应当是**最先遇到**的那一支。
+test_t02_blocker_is_the_nearest_piece_on_the_ray ... ok   射线上可能有好几支箭头，挡住它的应当是**最先遇到**的那一支。
 test_t02_blocking_piece_moves_away_then_it_can_fly ... ok   把挡路的点掉之后，原本被挡的那支就能飞了（连锁的最小例子）。
 test_t03_pieces_at_edges_face_outward_and_can_fly ... ok
 test_validate_layout_accepts_good_level ... ok
@@ -419,7 +419,7 @@ test_validate_layout_rejects_empty_level ... ok
 test_validate_layout_rejects_head_direction_mismatch ... ok   最后一段必须和箭头方向一致，否则画出来的箭头会歪在拐角上。
 test_validate_layout_rejects_out_of_board ... ok
 test_validate_layout_rejects_overlap ... ok
-test_validate_layout_rejects_piece_facing_own_body ... ok   箭头正对着自己的管道 -> 永远飞不出去，必须在关卡校验里拦掉。
+test_validate_layout_rejects_piece_facing_own_body ... ok   箭头正对着自己的箭头 -> 永远飞不出去，必须在关卡校验里拦掉。
 test_validate_layout_rejects_self_crossing ... ok
 test_base_cell_is_within_limits ... ok
 test_board_fills_the_viewport_vertically ... ok   竖屏棋盘应当把视口高度基本占满，否则上下会各空出一条。
@@ -440,14 +440,14 @@ test_clicking_the_hinted_piece_clears_the_highlight ... ok
 test_default_zoom_sits_at_one_third_of_the_slider ... ok   默认缩放是 100%，它对应的滑杆位置应当就是三分之一处。
 test_demo_colors_are_distinct ... ok
 test_demo_specs_parse_and_are_deterministic ... ok
-test_drag_on_board_does_not_count_as_a_click ... ok   拖动查看棋盘时松手不能顺手点掉一支管道。
+test_drag_on_board_does_not_count_as_a_click ... ok   拖动查看棋盘时松手不能顺手点掉一支箭头。
 test_enter_levels_and_back ... ok
 test_escape_closes_the_settings_panel_first ... ok
 test_escape_returns_to_the_menu ... ok
 test_event_handling_smoke ... ok   走一遍真实事件分发：移动 / 按下 / 松开 / 按键，都不能抛异常。
 test_every_scene_draws_without_raising ... ok
 test_final_level_clear_shows_all_clear ... ok
-test_guide_segment_disappears_with_the_piece ... ok   已经飞走的管道不再有辅助线。
+test_guide_segment_disappears_with_the_piece ... ok   已经飞走的箭头不再有辅助线。
 test_guide_segment_ends_inside_the_blocking_cell ... ok   被挡住时，辅助线的终点要落在**射线上被占的那一格**里。
 test_guide_segment_is_parallel_to_the_arrow ... ok   辅助线必须和箭头同向、且在射线不为空时有长度。
 test_guides_draw_for_every_level ... ok
@@ -481,7 +481,7 @@ test_space_starts_the_game_from_the_menu ... ok
 test_start_level_rejects_out_of_range ... ok
 test_starting_a_level_sets_up_the_board ... ok
 test_starts_in_menu ... ok
-test_t04_clear_level_then_go_to_next_level ... ok   T04：清空本关全部管道 -> 弹「通关」面板并记分 -> 点「下一关」进入下一关。
+test_t04_clear_level_then_go_to_next_level ... ok   T04：清空本关全部箭头 -> 弹「通关」面板并记分 -> 点「下一关」进入下一关。
 test_t05_fail_then_restart ... ok   T05：把生命值点光 -> 弹「失败」面板且不得分 -> 「重新开始本关」能接着玩。
 test_t06_restart_mid_game ... ok   T06：进行中点掉一支、再故意点错一次，重新开始后布局与生命值都要恢复。
 test_theme_toggle_switches_and_returns ... ok
@@ -495,7 +495,7 @@ test_tutorial_can_be_replayed ... ok
 test_tutorial_does_not_score_or_unlock ... ok
 test_tutorial_runs_through_all_steps ... ok   教学关的每一步期望值都必须和实际结果对上——教程骗人会直接误导玩家。
 test_tutorial_shows_a_hint_ring_on_the_current_target ... ok
-test_tutorial_skips_steps_that_no_longer_apply ... ok   玩家完全可以乱点；不管怎么点，引导都不能指着一支已经飞走的管道。
+test_tutorial_skips_steps_that_no_longer_apply ... ok   玩家完全可以乱点；不管怎么点，引导都不能指着一支已经飞走的箭头。
 test_tutorial_viewport_leaves_room_for_the_bar ... ok   讲解条要占掉一块地方，棋盘视口得相应让出来，否则会叠在一起。
 test_use_hint_outside_a_level_only_toasts ... ok
 test_use_hint_sets_and_expires_the_highlight ... ok
@@ -515,7 +515,7 @@ test_level_count_and_names ... ok
 test_level_rejects_invalid_specs_at_construction ... ok   关卡数据写错时要在 import 阶段就炸，而不是等到玩家点进去。
 test_level_rejects_zero_size ... ok
 test_max_score_is_stars_times_300 ... ok
-test_piece_count_grows_with_level_number ... ok   管道数整体上一路变多。
+test_piece_count_grows_with_level_number ... ok   箭头数整体上一路变多。
 test_report_shape ... ok
 test_solution_covers_every_piece_exactly_once ... ok
 test_total_max_score_is_stable ... ok
@@ -549,7 +549,7 @@ test_piece_surface_big_enough_for_the_whole_pipe ... ok
 test_piece_surface_cache_stays_bounded ... ok   缓存上限是硬要求：缩放滑杆一路拖过去会生成上百个格距。
 test_piece_surface_differs_by_cell_size ... ok
 test_piece_surface_geometry_places_each_cell_correctly ... ok   贴图 + 偏移必须能把每一格摆回它该在的位置。
-test_piece_surface_is_cached ... ok   同一支管道重复取贴图必须命中缓存，否则每帧都在重新渲染。
+test_piece_surface_is_cached ... ok   同一支箭头重复取贴图必须命中缓存，否则每帧都在重新渲染。
 test_round_rect_alpha_does_not_raise ... ok
 test_slider_helpers_round_trip ... ok
 test_slider_ratio_is_clamped ... ok
@@ -572,7 +572,7 @@ test_zero_hp_gives_zero_score ... ok
 test_count_free_pieces_is_monotonic_after_removing_a_piece ... ok   每消掉一支，可点数只可能变多或不变（不会变少）。
 test_count_free_pieces_matches_board_query ... ok
 test_solve_simple_level ... ok
-test_solver_is_monotonic ... ok   消除一支管道只会让别的射线更空，所以「能飞」不会因为等待而失效。
+test_solver_is_monotonic ... ok   消除一支箭头只会让别的射线更空，所以「能飞」不会因为等待而失效。
 test_solver_order_actually_clears_the_board ... ok   求解器给出的顺序拿去真的点一遍，必须能清空。
 test_solver_rejects_a_layout_with_no_free_piece ... ok   一个连开局都点不动的循环，应当被判定为无解。
 test_two_pieces_facing_each_other_are_unsolvable ... ok   互相指着的两支谁也飞不出去——求解器必须报「无解」而不是死循环。
@@ -592,7 +592,7 @@ test_render_does_not_mutate_the_board ... ok   画一遍不能改棋盘状态—
 ## 七、关卡可解性校验
 
 执行 `python tools/verify_levels.py`（完整输出，含每关的布局图与参考通关顺序）。
-布局图里 `.` 是空格、`o` 是管道身子、`^v<>` 是箭头：
+布局图里 `.` 是空格、`o` 是箭头身子、`^v<>` 是箭头：
 
 ```
 ==============================================================================
@@ -600,7 +600,7 @@ test_render_does_not_mutate_the_board ... ok   画一遍不能改棋盘状态—
 ==============================================================================
 
 教学关（主菜单独立入口：不计分、不占关卡编号、不用解锁）
-             棋盘 5×5   管道  3 支   密度 0.32   开局可点 2 支
+             棋盘 5×5   箭头  3 支   密度 0.32   开局可点 2 支
          难度 ★   生命值 6 颗   本关满分 不计分
 ------------------------------------------------------------------------------
     0 | ....o
@@ -613,7 +613,7 @@ test_render_does_not_mutate_the_board ... ok   画一遍不能改棋盘状态—
    参考顺序：(4,3)下 -> (1,4)下 -> (2,2)右
    引导步骤：4 步（点哪里、为什么，都在关卡里的高亮环上）
 
-第  1 关  初次拉弓   棋盘 11×8   管道 21 支   密度 0.97   开局可点 7 支
+第  1 关  初次拉弓   棋盘 11×8   箭头 21 支   密度 0.97   开局可点 7 支
          难度 ★   生命值 4 颗   本关满分 300 分
 ------------------------------------------------------------------------------
     0 | ^^^^oo<o
@@ -631,7 +631,7 @@ test_render_does_not_mutate_the_board ... ok   画一遍不能改棋盘状态—
    [OK] 可解，共 21 步
    参考顺序：(0,0)上 -> (5,7)右 -> (0,1)上 -> (4,7)右 -> (6,7)右 -> (0,2)上 -> (0,3)上 -> (1,2)左 -> (0,6)左 -> (1,5)左 -> (3,2)上 -> (2,3)上 -> (7,7)上 -> (2,4)左 -> (9,7)上 -> (7,5)上 -> (6,4)上 -> (5,2)右 -> (5,0)上 -> (7,0)上 -> (9,0)上
 
-第  2 关  交叉路口   棋盘 13×9   管道 23 支   密度 0.99   开局可点 6 支
+第  2 关  交叉路口   棋盘 13×9   箭头 23 支   密度 0.99   开局可点 6 支
          难度 ★   生命值 4 颗   本关满分 300 分
 ------------------------------------------------------------------------------
     0 | o>o>^^^^^
@@ -651,7 +651,7 @@ test_render_does_not_mutate_the_board ... ok   画一遍不能改棋盘状态—
    [OK] 可解，共 23 步
    参考顺序：(0,8)上 -> (0,7)上 -> (3,8)右 -> (0,6)上 -> (0,5)上 -> (0,4)上 -> (0,3)右 -> (4,8)上 -> (1,4)右 -> (2,5)右 -> (3,7)上 -> (8,8)上 -> (0,1)右 -> (7,7)上 -> (6,3)上 -> (5,6)上 -> (10,8)上 -> (10,7)上 -> (6,2)右 -> (5,2)右 -> (8,0)上 -> (8,1)上 -> (11,0)上
 
-第  3 关  连锁反应   棋盘 14×10   管道 22 支   密度 0.97   开局可点 5 支
+第  3 关  连锁反应   棋盘 14×10   箭头 22 支   密度 0.97   开局可点 5 支
          难度 ★★   生命值 5 颗   本关满分 600 分
 ------------------------------------------------------------------------------
     0 | ooooooo>o>
@@ -672,7 +672,7 @@ test_render_does_not_mutate_the_board ... ok   画一遍不能改棋盘状态—
    [OK] 可解，共 22 步
    参考顺序：(1,9)右 -> (13,1)下 -> (7,9)右 -> (0,9)右 -> (13,0)左 -> (10,0)下 -> (2,9)上 -> (0,7)右 -> (11,1)左 -> (7,0)下 -> (11,3)下 -> (5,0)下 -> (9,3)下 -> (3,0)下 -> (7,6)上 -> (7,3)下 -> (1,0)下 -> (6,7)左 -> (8,9)上 -> (7,7)上 -> (10,9)上 -> (12,9)上
 
-第  4 关  四面楚歌   棋盘 16×11   管道 27 支   密度 0.97   开局可点 5 支
+第  4 关  四面楚歌   棋盘 16×11   箭头 27 支   密度 0.97   开局可点 5 支
          难度 ★★★   生命值 6 颗   本关满分 900 分
 ------------------------------------------------------------------------------
     0 | oooooooo>o>
@@ -695,7 +695,7 @@ test_render_does_not_mutate_the_board ... ok   画一遍不能改棋盘状态—
    [OK] 可解，共 27 步
    参考顺序：(15,0)左 -> (0,10)右 -> (15,2)下 -> (2,10)右 -> (1,10)右 -> (3,10)上 -> (0,8)右 -> (2,9)上 -> (14,0)下 -> (6,10)上 -> (7,7)上 -> (12,1)下 -> (14,4)左 -> (12,2)下 -> (8,10)上 -> (8,3)下 -> (10,10)上 -> (6,4)下 -> (8,2)右 -> (12,10)上 -> (13,9)上 -> (8,0)下 -> (6,0)下 -> (6,1)下 -> (3,0)下 -> (3,3)下 -> (1,0)下
 
-第  5 关  错位走廊   棋盘 18×12   管道 28 支   密度 0.97   开局可点 4 支
+第  5 关  错位走廊   棋盘 18×12   箭头 28 支   密度 0.97   开局可点 4 支
          难度 ★★★   生命值 6 颗   本关满分 900 分
 ------------------------------------------------------------------------------
     0 | ooooooooooo>
@@ -720,7 +720,7 @@ test_render_does_not_mutate_the_board ... ok   画一遍不能改棋盘状态—
    [OK] 可解，共 28 步
    参考顺序：(0,11)右 -> (17,0)左 -> (1,11)右 -> (2,11)右 -> (5,8)上 -> (17,3)左 -> (2,10)上 -> (16,0)下 -> (5,11)上 -> (14,0)下 -> (7,11)上 -> (7,10)上 -> (11,0)下 -> (14,3)左 -> (13,3)左 -> (10,11)上 -> (9,0)下 -> (11,3)下 -> (12,11)上 -> (7,0)下 -> (8,4)下 -> (14,11)上 -> (15,10)上 -> (5,0)下 -> (6,4)下 -> (3,0)下 -> (4,4)下 -> (1,0)下
 
-第  6 关  纵横交错   棋盘 20×14   管道 37 支   密度 0.96   开局可点 4 支
+第  6 关  纵横交错   棋盘 20×14   箭头 37 支   密度 0.96   开局可点 4 支
          难度 ★★★★   生命值 6 颗   本关满分 1200 分
 ------------------------------------------------------------------------------
     0 | o>o>o>o>o>o>o>
@@ -747,7 +747,7 @@ test_render_does_not_mutate_the_board ... ok   画一遍不能改棋盘状态—
    [OK] 可解，共 37 步
    参考顺序：(10,0)左 -> (0,13)右 -> (1,13)右 -> (11,0)左 -> (0,11)右 -> (2,13)上 -> (1,12)右 -> (11,1)左 -> (0,9)右 -> (4,13)上 -> (6,13)上 -> (0,7)右 -> (6,9)上 -> (4,8)上 -> (8,13)上 -> (0,5)右 -> (10,9)上 -> (4,7)右 -> (7,8)上 -> (10,13)上 -> (0,3)右 -> (12,9)上 -> (5,4)右 -> (6,4)右 -> (9,6)上 -> (15,4)上 -> (0,1)右 -> (12,13)上 -> (14,9)上 -> (14,8)上 -> (14,13)上 -> (12,0)上 -> (16,13)上 -> (17,12)上 -> (14,0)上 -> (16,0)上 -> (18,0)上
 
-第  7 关  长蛇阵   棋盘 22×15   管道 38 支   密度 0.95   开局可点 3 支
+第  7 关  长蛇阵   棋盘 22×15   箭头 38 支   密度 0.95   开局可点 3 支
          难度 ★★★★   生命值 6 颗   本关满分 1200 分
 ------------------------------------------------------------------------------
     0 | ooooooooooooooo
@@ -776,7 +776,7 @@ test_render_does_not_mutate_the_board ... ok   画一遍不能改棋盘状态—
    [OK] 可解，共 38 步
    参考顺序：(21,1)下 -> (21,0)左 -> (21,2)下 -> (17,0)下 -> (20,2)左 -> (19,1)左 -> (15,0)下 -> (21,5)左 -> (18,1)下 -> (12,0)下 -> (21,7)左 -> (19,8)左 -> (14,5)下 -> (17,6)左 -> (15,1)下 -> (21,9)左 -> (19,11)左 -> (10,0)下 -> (15,11)左 -> (12,5)下 -> (12,6)下 -> (13,8)左 -> (21,12)左 -> (8,0)下 -> (8,5)下 -> (8,6)下 -> (9,8)下 -> (13,10)左 -> (6,0)下 -> (5,1)下 -> (5,5)下 -> (13,13)左 -> (2,0)下 -> (2,1)下 -> (6,14)下 -> (4,14)下 -> (3,12)下 -> (2,14)下
 
-第  8 关  十面埋伏   棋盘 23×17   管道 43 支   密度 0.95   开局可点 3 支
+第  8 关  十面埋伏   棋盘 23×17   箭头 43 支   密度 0.95   开局可点 3 支
          难度 ★★★★★   生命值 7 颗   本关满分 1500 分
 ------------------------------------------------------------------------------
     0 | oooooooooooo>o>o>
@@ -806,7 +806,7 @@ test_render_does_not_mutate_the_board ... ok   画一遍不能改棋盘状态—
    [OK] 可解，共 43 步
    参考顺序：(0,16)右 -> (22,0)左 -> (22,2)下 -> (0,14)右 -> (21,0)下 -> (1,16)上 -> (19,0)下 -> (4,16)上 -> (0,12)右 -> (1,12)右 -> (19,1)下 -> (21,2)左 -> (20,3)左 -> (6,16)上 -> (16,0)下 -> (15,1)下 -> (15,5)下 -> (7,11)上 -> (12,0)下 -> (8,16)上 -> (9,11)上 -> (12,5)下 -> (10,0)下 -> (10,16)上 -> (10,15)上 -> (14,10)上 -> (8,6)右 -> (8,0)下 -> (13,16)上 -> (8,1)下 -> (14,14)上 -> (7,5)下 -> (7,6)下 -> (5,0)下 -> (4,1)下 -> (15,16)上 -> (16,12)上 -> (4,5)下 -> (1,0)下 -> (18,16)上 -> (18,12)上 -> (18,11)上 -> (21,16)上
 
-第  9 关  万箭归一   棋盘 26×18   管道 46 支   密度 0.92   开局可点 3 支
+第  9 关  万箭归一   棋盘 26×18   箭头 46 支   密度 0.92   开局可点 3 支
          难度 ★★★★★   生命值 7 颗   本关满分 1500 分
 ------------------------------------------------------------------------------
     0 | oo>o>o>o>o>o>oooo^
@@ -841,7 +841,7 @@ test_render_does_not_mutate_the_board ... ok   画一遍不能改棋盘状态—
 
 校验结果：教学关 + 全部 9 个编号关卡均可正常通关。
 难度参考：棋盘逐关放大，最大的一关是第 9 关 26×18（468 格）；
-          管道逐关变多（21 → 46 支），开局可点的反而从 7 支收到 3 支。
+          箭头逐关变多（21 → 46 支），开局可点的反而从 7 支收到 3 支。
           出口更少、要扫的射线更长，这才是难度真正的来源。
 生命值参考：按难度星级给，第 1 关 4 颗心、最后一关 7 颗心。
             关卡越难容错越高，一次手滑不至于被打回原点。
@@ -855,7 +855,7 @@ test_render_does_not_mutate_the_board ... ok   画一遍不能改棋盘状态—
 
 ### 关卡一览
 
-| 关卡 | 名称 | 棋盘 | 管道 | 占格 | 铺满率 | 开局可点 | 生命值 | 难度 | 本关满分 |
+| 关卡 | 名称 | 棋盘 | 箭头 | 占格 | 铺满率 | 开局可点 | 生命值 | 难度 | 本关满分 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 教学关 | 教学关 | 5×5 | 3 | 8 | 0.32 | 2 | ♥×6 | 不计分 | — |
 | 1 | 初次拉弓 | 11×8 | 21 | 85 | 0.97 | 7 | ♥×4 | ★ | 300 |
@@ -868,7 +868,7 @@ test_render_does_not_mutate_the_board ... ok   画一遍不能改棋盘状态—
 | 8 | 十面埋伏 | 23×17 | 43 | 372 | 0.95 | 3 | ♥×7 | ★★★★★ | 1500 |
 | 9 | 万箭归一 | 26×18 | 46 | 430 | 0.92 | 3 | ♥×7 | ★★★★★ | 1500 |
 
-9 个编号关卡合计 **285 支管道**、满分合计 **8400 分**。
+9 个编号关卡合计 **285 支箭头**、满分合计 **8400 分**。
 第 5~9 关由 `tools/generate_levels.py` **逆向构造**生成（从构造方式上就保证可解），
 再由 `tools/pick_levels.py` 从同一尺寸的候选里挑出「铺满率最高 + 开局可点数最接近目标」的那一版，
 最后仍由 `verify_levels.py` 的求解器逐关复核，三道保险。
@@ -876,12 +876,12 @@ test_render_does_not_mutate_the_board ... ok   画一遍不能改棋盘状态—
 **难度曲线的数据**：九个关卡的难度分是
 `23.2 / 32.8 / 37.0 / 49.3 / 58.7 / 80.8 / 91.4 / 106.7 / 120.8`，
 一路单调递增（测试 `test_difficulty_and_stars_never_go_backwards` 卡着这条）。
-难度分 = `管道数 × 1.6 + 棋盘格数 × 0.12 − 开局可点数 × 3.0`，
+难度分 = `箭头数 × 1.6 + 棋盘格数 × 0.12 − 开局可点数 × 3.0`，
 再按阈值 `(<35, <45, <70, <100, 其余)` 映射成 1~5 颗星。
 
 **难度轴换过一次。** 上一版棋盘尺寸冻结在 9×9、靠「密度」继续加难；
 这一版改成棋盘一直放大到 26×18，难度更多地来自**要扫的射线变多**：
-棋盘越大、管道越长（平均单支从 4 格一路涨到 9.3 格），越难一眼找出能点的那支。
+棋盘越大、箭头越长（平均单支从 4 格一路涨到 9.3 格），越难一眼找出能点的那支。
 不变的判断是那条最要紧的：**开局可点数从 7 支一路收到 3 支**，
 这才是真正决定手感的那一项。
 
@@ -900,7 +900,7 @@ test_render_does_not_mutate_the_board ... ok   画一遍不能改棋盘状态—
 校验时报出 `开局可点 0 支 / 可解=False`：`(1,1)` 的 `>` 被 `(1,3)` 的 `v` 挡住，
 `v` 被 `(3,3)` 的 `<` 挡住，`<` 被 `(3,1)` 的 `^` 挡住，`^` 又被 `(1,1)` 的 `>` 挡住——
 四支箭头围成一个死环。把 `<` 从 `(3,3)` 移到 `(3,4)` 之后即恢复可解。
-（这一版关卡重做成弯曲管道之后，第 2 关已经换成了 13×9 的新布局，
+（这一版关卡重做成弯曲箭头之后，第 2 关已经换成了 13×9 的新布局，
 但「关卡不能靠眼睛验收」这条教训一直留着：
 现在 `validate_layout` 在导入关卡时就拦非法形状，`verify_levels.py` 与单元测试再各解一遍。）
 
@@ -921,13 +921,13 @@ test_render_does_not_mutate_the_board ... ok   画一遍不能改棋盘状态—
 
 | 关卡 | 待确认的试玩要点 |
 | --- | --- |
-| 教学关 | 3 支管道配 6 颗心，跟着黄色高亮环一步步点即可；第一步是**故意**让玩家点一支被挡住的管道，用来体验撞击反馈和掉心 |
+| 教学关 | 3 支箭头配 6 颗心，跟着黄色高亮环一步步点即可；第一步是**故意**让玩家点一支被挡住的箭头，用来体验撞击反馈和掉心 |
 | 第 1 关 初次拉弓 | 11×8 / 21 支，开局有 7 支能直接飞，适合建立信心 |
 | 第 2 关 交叉路口 | 13×9 / 23 支，开局只剩 6 支能点，盘面铺满率 0.99，要顺着射线一支一支解 |
-| 第 3 关 连锁反应 | 管道开始变长（均 6.2 格），先点能走的那几支，连锁反馈是否明显 |
+| 第 3 关 连锁反应 | 箭头开始变长（均 6.2 格），先点能走的那几支，连锁反馈是否明显 |
 | 第 4 关 四面楚歌 | 16×11 / 27 支，均长 6.3 格，横竖都要扫一遍 |
-| 第 5~7 关 | 18×12 → 22×15，管道 28 / 37 / 38 支，开局可点 4 → 4 → 3；扫视量明显变大，缩放滑杆好不好用 |
-| 第 8~9 关 | 23×17 / 26×18，管道 43 / 46 支，均长 8.7 / 9.3 格，开局只剩 3 支能先飞；心给了 7 颗 |
+| 第 5~7 关 | 18×12 → 22×15，箭头 28 / 37 / 38 支，开局可点 4 → 4 → 3；扫视量明显变大，缩放滑杆好不好用 |
+| 第 8~9 关 | 23×17 / 26×18，箭头 43 / 46 支，均长 8.7 / 9.3 格，开局只剩 3 支能先飞；心给了 7 颗 |
 | 通用 | 「重新开始本关」后布局与生命值正确复位；`R` 重开、`H` 提示、`G` 辅助线、`+` / `-` 缩放都正常；放大后拖动棋盘顺不顺手 |
 | 进度 | 关掉游戏再打开，已解锁到哪一关、每关最高分都会被记住；「清空进度」需连点两次 |
-| 双主题 | 顶栏月亮开关切到日间，棋盘上的管道与文字是否都还看得清 |
+| 双主题 | 顶栏月亮开关切到日间，棋盘上的箭头与文字是否都还看得清 |

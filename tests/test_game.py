@@ -10,15 +10,15 @@
 做到无头运行，所以在没有显示器的机器上也能跑。
 
 T01~T06 的对应关系：
-    T01  箭头前方无阻挡          -> 点击后整支管道飞出被消除
-    T02  箭头前方有别的管道       -> 飞不出去，并扣 1 点生命值
+    T01  箭头前方无阻挡          -> 点击后整支箭头飞出被消除
+    T02  箭头前方有别的箭头       -> 飞不出去，并扣 1 点生命值
     T03  箭头朝棋盘外（含边角）   -> 算作无阻挡，可以飞出，且不越界
     T04  点击空格                -> 什么都不发生（不扣生命值、不消除）
     T05  生命值耗尽              -> 本关失败、不得分
-    T06  清空全部管道            -> 通关、按剩余生命值计分、解锁下一关
+    T06  清空全部箭头            -> 通关、按剩余生命值计分、解锁下一关
 
-关于「管道」这个词：这一版的一支「箭」是一条占好几格的折线管道，末端是箭头。
-所以测试里凡是点格子，点它身上的**任意一格**都应该选中整支管道——
+关于「箭头」这个词：这一版的一支「箭」是一条占好几格的折线箭头，末端是箭头。
+所以测试里凡是点格子，点它身上的**任意一格**都应该选中整支箭头——
 这是这一版最容易被写错的地方，专门有几个用例钉住它。
 """
 
@@ -73,7 +73,7 @@ def piece_at_head(level, row, col):
     for piece in level.pieces:
         if piece.head == (row, col):
             return piece
-    raise KeyError("没有头在 (%d, %d) 的管道" % (row, col))
+    raise KeyError("没有头在 (%d, %d) 的箭头" % (row, col))
 
 
 def level_index(name):
@@ -89,7 +89,7 @@ def level_index(name):
 
 
 def neighbour_pairs(level):
-    """返回所有「两支管道有一格上下左右相邻」的组合（用于配色检查）。"""
+    """返回所有「两支箭头有一格上下左右相邻」的组合（用于配色检查）。"""
     owner = {}
     for index, piece in enumerate(level.pieces):
         for cell in piece.cells:
@@ -104,14 +104,14 @@ def neighbour_pairs(level):
 
 
 # ---------------------------------------------------------------- T01~T03 规则
-# 三支管道，摆成一个「挡住 -> 让路 -> 都能飞」的小局面：
+# 三支箭头，摆成一个「挡住 -> 让路 -> 都能飞」的小局面：
 #     A "2,0 > R2"  横躺三格，箭头朝右，正前方 (2,3) 是 B 的身子   -> 被挡
 #     B "2,3 v D2"  竖着三格，箭头朝下，前方一路空到盘外           -> 能飞
 #     C "0,4 v D"   竖着两格，箭头朝下，也是通的                   -> 能飞
 BASIC_SPECS = ("2,0 > R2", "2,3 v D2", "0,4 v D")
 BASIC_ROWS, BASIC_COLS = 5, 5
 
-# 四条边上的管道都朝向棋盘外，用来验证边界判断（T03）
+# 四条边上的箭头都朝向棋盘外，用来验证边界判断（T03）
 EDGE_SPECS = ("0,0 ^", "0,3 v", "1,4 >", "3,4 <")
 EDGE_ROWS, EDGE_COLS = 4, 5
 
@@ -142,7 +142,7 @@ class BoardRuleTestCase(unittest.TestCase):
         """朝下的 'v' 不能被 upper() 变成 'V' 而解析失败。
 
         这是一个真实发生过的 bug：整串 upper() 之后 'v' 变成 'V'，
-        方向表里认的是小写 'v'，于是所有朝下的管道都没法解析。
+        方向表里认的是小写 'v'，于是所有朝下的箭头都没法解析。
         """
         for char in ("v",):
             cells, direction = pieces.parse_piece("1,1 %s D" % char)
@@ -235,9 +235,9 @@ class BoardRuleTestCase(unittest.TestCase):
             pieces.validate_layout(3, 3, bad)
 
     def test_validate_layout_rejects_piece_facing_own_body(self):
-        """箭头正对着自己的管道 -> 永远飞不出去，必须在关卡校验里拦掉。
+        """箭头正对着自己的箭头 -> 永远飞不出去，必须在关卡校验里拦掉。
 
-        形状是一条绕回来的管道：从 (0,0) 一路向右、向下、再向左绕回 (1,1)，
+        形状是一条绕回来的箭头：从 (0,0) 一路向右、向下、再向左绕回 (1,1)，
         箭头朝上，正前方 (0,1) 就是自己身上的一格。
         这一支的**末段方向与箭头是一致的**，所以触发的一定是
         「箭头正对自己」这条规则，而不是「末段不一致」那条。
@@ -270,7 +270,7 @@ class BoardRuleTestCase(unittest.TestCase):
             self.assertIn(piece.color, PIECE_PALETTE)
 
     def test_adjacent_pieces_never_share_a_color(self):
-        """相邻管道同色会「糊成一片」，看不出是几支——所有关卡都要守住这条。"""
+        """相邻箭头同色会「糊成一片」，看不出是几支——所有关卡都要守住这条。"""
         for level in list(LEVELS) + [TUTORIAL]:
             for left, right in neighbour_pairs(level):
                 self.assertNotEqual(level.pieces[left].color, level.pieces[right].color,
@@ -296,26 +296,26 @@ class BoardRuleTestCase(unittest.TestCase):
         self.assertEqual(len(board.history), 1)
 
     def test_clicking_any_cell_of_a_pipe_selects_the_whole_pipe(self):
-        """点管道的哪一格都算选中它——玩家看到的是整条管道。"""
+        """点箭头的哪一格都算选中它——玩家看到的是整条箭头。"""
         for row, col in ((2, 3), (3, 3), (4, 3)):
             board = Board(make_level(BASIC_SPECS, BASIC_ROWS, BASIC_COLS))
             result = board.click(row, col)
-            self.assertEqual(result.kind, CLICK_FLY, "点 (%d,%d) 应当消除整条管道" % (row, col))
+            self.assertEqual(result.kind, CLICK_FLY, "点 (%d,%d) 应当消除整条箭头" % (row, col))
             self.assertEqual(board.remaining, 2)
-            # 整条管道三格都要被清空，不能只清点中的那一格
+            # 整条箭头三格都要被清空，不能只清点中的那一格
             for r, c in ((2, 3), (3, 3), (4, 3)):
                 self.assertIsNone(board.piece_at(r, c))
 
     # ------------------------------------------------------------ T02 被挡
     def test_t02_blocked_piece_loses_one_heart(self):
         board = Board(make_level(BASIC_SPECS, BASIC_ROWS, BASIC_COLS))
-        target = board.piece_at(2, 0)                  # 横躺那支，正前方有管道
+        target = board.piece_at(2, 0)                  # 横躺那支，正前方有箭头
         result = board.click(2, 0)
         self.assertEqual(result.kind, CLICK_BLOCKED)
         self.assertIs(result.piece, target)
         self.assertIsNotNone(result.blocker)
         # 挡住它的是竖着那支（身子压在 (2,3)，箭头在 (4,3)）；
-        # 这里比对的是**整支管道**，不是被碰上的那一格。
+        # 这里比对的是**整支箭头**，不是被碰上的那一格。
         self.assertEqual(result.blocker.cells, ((2, 3), (3, 3), (4, 3)))
         self.assertIn(result.blocker, board.pieces)
         self.assertEqual(board.hp, board.max_hp - 1)
@@ -324,9 +324,9 @@ class BoardRuleTestCase(unittest.TestCase):
         self.assertIsNotNone(board.piece_at(2, 0))
 
     def test_t02_blocker_is_the_nearest_piece_on_the_ray(self):
-        """射线上可能有好几支管道，挡住它的应当是**最先遇到**的那一支。
+        """射线上可能有好几支箭头，挡住它的应当是**最先遇到**的那一支。
 
-        而且挡路的往往是那支管道的**身子**，它的箭头可能在别的地方——
+        而且挡路的往往是那支箭头的**身子**，它的箭头可能在别的地方——
         下面 (1,1) 那支的头就落在 (2,1)，不在射线上。
         （界面早先直接 `path.index(blocker.head)` 画悬停路径，遇到这种就会崩。）
         """
@@ -368,10 +368,10 @@ class BoardRuleTestCase(unittest.TestCase):
         self.assertEqual(board.remaining, 1)
 
     def test_find_blocker_ignores_the_pieces_own_body(self):
-        """管道绕回来贴着自己的箭头前方时，不算「被自己挡住」。
+        """箭头绕回来贴着自己的箭头前方时，不算「被自己挡住」。
 
-        取一支真实关卡里形状恰好如此的管道来验证：它的射线会经过自己的某一格，
-        但 find_blocker 只认**别的**管道。
+        取一支真实关卡里形状恰好如此的箭头来验证：它的射线会经过自己的某一格，
+        但 find_blocker 只认**别的**箭头。
         """
         hits = 0
         for level in LEVELS:
@@ -399,7 +399,7 @@ class BoardRuleTestCase(unittest.TestCase):
         self.assertEqual(board.remaining, 4)
         for piece in list(board.pieces):
             self.assertTrue(board.can_fly(piece),
-                            "朝棋盘外的管道应当能飞：%r" % (piece.cells,))
+                            "朝棋盘外的箭头应当能飞：%r" % (piece.cells,))
         for row, col in ((0, 0), (0, 3), (1, 4), (3, 4)):
             self.assertEqual(board.click(row, col).kind, CLICK_FLY)
         self.assertEqual(board.remaining, 0)
@@ -526,10 +526,10 @@ class SolverTestCase(unittest.TestCase):
             self.assertEqual(board.state, STATE_CLEARED)
 
     def test_solver_is_monotonic(self):
-        """消除一支管道只会让别的射线更空，所以「能飞」不会因为等待而失效。
+        """消除一支箭头只会让别的射线更空，所以「能飞」不会因为等待而失效。
 
         这条性质是贪心求解正确性的根基，用它做一次随机自检：
-        开局能飞的管道，在消掉任意其它管道之后依然能飞。
+        开局能飞的箭头，在消掉任意其它箭头之后依然能飞。
         """
         rng = random.Random(20260922)
         for level in LEVELS[:5]:
@@ -613,16 +613,16 @@ class LevelBalanceTestCase(unittest.TestCase):
             self.assertLessEqual(earlier[1], later[1])
 
     def test_piece_count_grows_with_level_number(self):
-        """管道数整体上一路变多。
+        """箭头数整体上一路变多。
 
-        允许相邻两关偶尔差一支（棋盘形状不同，铺满同一块面积需要的管道数
+        允许相邻两关偶尔差一支（棋盘形状不同，铺满同一块面积需要的箭头数
         本来就会有出入——第 3 关棋盘更大、却比第 2 关少一支），
         真正决定难度的是「开局可点数」和棋盘面积，那两条另有用例把关。
         """
         counts = [level.arrow_count for level in LEVELS]
         for earlier, later in zip(counts, counts[1:]):
             self.assertGreaterEqual(later, earlier - 2,
-                                    "管道数掉得太多：%r" % (counts,))
+                                    "箭头数掉得太多：%r" % (counts,))
         self.assertLess(counts[0], counts[-1])
         self.assertGreaterEqual(counts[-1], counts[0] * 2 - 4)
 
@@ -698,7 +698,7 @@ class LevelBalanceTestCase(unittest.TestCase):
 
     def test_tutorial_is_solvable_and_small(self):
         self.assertIsNotNone(TUTORIAL.solution())
-        self.assertLessEqual(TUTORIAL.arrow_count, 4, "教学关不该摆太多管道")
+        self.assertLessEqual(TUTORIAL.arrow_count, 4, "教学关不该摆太多箭头")
         self.assertLessEqual(TUTORIAL.rows * TUTORIAL.cols, 36)
 
     def test_report_shape(self):
@@ -888,7 +888,7 @@ class ProgressTestCase(unittest.TestCase):
 
 # ---------------------------------------------------------------- 绘制原语
 class RenderPrimitiveTestCase(unittest.TestCase):
-    """界面绘制的基础件：管道贴图、字体折行、滑杆、像素心、动画。"""
+    """界面绘制的基础件：箭头贴图、字体折行、滑杆、像素心、动画。"""
 
     @classmethod
     def setUpClass(cls):
@@ -901,7 +901,7 @@ class RenderPrimitiveTestCase(unittest.TestCase):
         pygame.quit()
 
     def test_piece_surface_is_cached(self):
-        """同一支管道重复取贴图必须命中缓存，否则每帧都在重新渲染。"""
+        """同一支箭头重复取贴图必须命中缓存，否则每帧都在重新渲染。"""
         cells, direction = pieces.parse_piece("0,0 > R2")
         color = PIECE_PALETTE[0]
         first = ui.piece_surface(cells, direction, color, 40)
@@ -921,7 +921,7 @@ class RenderPrimitiveTestCase(unittest.TestCase):
 
         约定是：把贴图贴到「棋盘左上角 + 偏移」，管线起点那一格的**中心**
         就正好落在 棋盘左上角 + (min_col + 0.5) * 格距。留白左右对称，
-        所以从「贴图宽度 - 管道实际跨度」就能反推出留白是多少。
+        所以从「贴图宽度 - 箭头实际跨度」就能反推出留白是多少。
         """
         cells, direction = pieces.parse_piece("2,1 v D2")     # (2,1) (3,1) (4,1)
         cell = 32
@@ -964,7 +964,7 @@ class RenderPrimitiveTestCase(unittest.TestCase):
         self.assertIsNot(first, second)
 
     def test_wrap_text_respects_max_width(self):
-        text = "一支管道是一条占好几格的折线，末端那个箭头就是它的朝向，点它身上任意一格都算选中。"
+        text = "一支箭头是一条占好几格的折线，末端那个箭头就是它的朝向，点它身上任意一格都算选中。"
         lines = ui.wrap_text(text, size=16, max_width=200)
         self.assertGreater(len(lines), 1)
         for line in lines:
@@ -972,7 +972,7 @@ class RenderPrimitiveTestCase(unittest.TestCase):
 
     def test_wrap_text_never_starts_a_line_with_punctuation(self):
         """逐字折行很容易把句号甩到下一行，中文排版上很难看。"""
-        text = "前方有管道挡着，飞不出去。这时会丢掉一颗心；所以要看清楚再点。"
+        text = "前方有箭头挡着，飞不出去。这时会丢掉一颗心；所以要看清楚再点。"
         for line in ui.wrap_text(text, size=15, max_width=110):
             self.assertNotIn(line[0], "。，、；：！？）】》」』")
 
@@ -986,7 +986,7 @@ class RenderPrimitiveTestCase(unittest.TestCase):
 
     def test_draw_paragraph_returns_consumed_height(self):
         rect = pygame.Rect(0, 0, 160, 200)
-        height = ui.draw_paragraph(self.screen, "点一下管道，让它飞出棋盘。" * 3, rect, size=14)
+        height = ui.draw_paragraph(self.screen, "点一下箭头，让它飞出棋盘。" * 3, rect, size=14)
         self.assertGreater(height, 0)
         self.assertLessEqual(height, rect.height)
 
@@ -1109,7 +1109,7 @@ class AnimationTestCase(unittest.TestCase):
                                "%s 方向飞反了：%r" % (direction, head))
 
     def test_fly_out_tail_follows_the_bend(self):
-        """L 形管道：尾巴没过弯时沿第一段滑，过弯后沿箭头方向直线出视口。
+        """L 形箭头：尾巴没过弯时沿第一段滑，过弯后沿箭头方向直线出视口。
 
         弯折是「流」过去的：每个折点沿路径走的弧长都相同，所以任何时刻
         尾巴的位置都应该正好落在原始路径上弧长 = advance 的那个点。
@@ -1148,7 +1148,7 @@ class AnimationTestCase(unittest.TestCase):
         self.assertGreater(effect.offset[0], 0)
 
     def test_impact_tint_moves_toward_red(self):
-        """被撞的管道要真的泛红——这是「点错了」最直接的反馈。"""
+        """被撞的箭头要真的泛红——这是「点错了」最直接的反馈。"""
         piece = Piece(cells=((1, 1),), direction="up", color=(0, 0, 255))
         effect = anim.Impact(piece, (0, 0), 40, pygame.Rect(0, 0, 40, 40))
         image, offset = effect.tinted(effect.TINT_LEVELS)
@@ -1326,7 +1326,7 @@ class GameFlowTestCase(unittest.TestCase):
     def test_clicking_a_blocked_pipe_shows_a_floating_heart(self):
         self.game.start_level(0)
         blocked = [p for p in self.game.board.pieces if not self.game.board.can_fly(p)]
-        self.assertTrue(blocked, "第 1 关开局应当有被挡住的管道")
+        self.assertTrue(blocked, "第 1 关开局应当有被挡住的箭头")
         before = self.game.board.hp
         result = self.game.click_cell(*blocked[0].head)
         self.assertEqual(result.kind, CLICK_BLOCKED)
@@ -1360,7 +1360,7 @@ class GameFlowTestCase(unittest.TestCase):
         self.assertEqual(self.game.board.remaining, LEVELS[0].arrow_count)
 
     def test_t04_clear_level_then_go_to_next_level(self):
-        """T04：清空本关全部管道 -> 弹「通关」面板并记分 -> 点「下一关」进入下一关。"""
+        """T04：清空本关全部箭头 -> 弹「通关」面板并记分 -> 点「下一关」进入下一关。"""
         self.game.start_level(0)
         for piece in self.game.board.solution():
             self.game.click_cell(*piece.head)
@@ -1439,7 +1439,7 @@ class GameFlowTestCase(unittest.TestCase):
         self.assertEqual(self.game.elapsed, 0.0)
         self.assertEqual(self.game.animations, [])
 
-        # 不只是「数量回来了」——每一支管道都回到了它自己原来的格子上
+        # 不只是「数量回来了」——每一支箭头都回到了它自己原来的格子上
         for pipe in LEVELS[0].pieces:
             self.assertIs(self.game.board.piece_at(*pipe.head), pipe)
 
@@ -1582,7 +1582,7 @@ class GameFlowTestCase(unittest.TestCase):
                                 (index, piece.head, end))
 
     def test_guide_segment_disappears_with_the_piece(self):
-        """已经飞走的管道不再有辅助线。"""
+        """已经飞走的箭头不再有辅助线。"""
         self.enter_level(0)
         piece = self.game.board.available_arrows()[0]
         self.game.click_cell(*piece.head)
@@ -1721,7 +1721,7 @@ class GameFlowTestCase(unittest.TestCase):
 
     # ------------------------------------------------------------ 拖拽
     def test_drag_on_board_does_not_count_as_a_click(self):
-        """拖动查看棋盘时松手不能顺手点掉一支管道。"""
+        """拖动查看棋盘时松手不能顺手点掉一支箭头。"""
         self.enter_level(TOTAL_LEVELS - 1)
         self.game.set_zoom_ratio(1.0)
         row, col = self.game.board.available_arrows()[0].head
@@ -2028,7 +2028,7 @@ class GameFlowTestCase(unittest.TestCase):
         self.assertLess(with_bar.height, without_bar.height)
 
     def test_tutorial_skips_steps_that_no_longer_apply(self):
-        """玩家完全可以乱点；不管怎么点，引导都不能指着一支已经飞走的管道。"""
+        """玩家完全可以乱点；不管怎么点，引导都不能指着一支已经飞走的箭头。"""
         self.game.start_tutorial()
         for piece in list(self.game.board.pieces):
             self.game.click_cell(*piece.head)

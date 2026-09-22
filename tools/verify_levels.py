@@ -11,7 +11,7 @@
 pieces.validate_layout 又把形状问题挡了一道，但这两道都在理论上，
 所以这里再老老实实跑一遍求解器 —— 布局对不对，点一遍最清楚。
 
-棋盘画成 ASCII：``.`` 是空格，``o`` 是管道身子，``^ v < >`` 是箭头那一格。
+棋盘画成 ASCII：``.`` 是空格，``o`` 是箭头身子，``^ v < >`` 是箭头那一格。
 """
 
 import argparse
@@ -28,7 +28,7 @@ DIR_NAME = {"up": "上", "down": "下", "left": "左", "right": "右"}
 
 
 def ascii_map(level):
-    """把关卡画成 ASCII 图：. 空格 / o 管道身子 / ^v<> 箭头。
+    """把关卡画成 ASCII 图：. 空格 / o 箭头身子 / ^v<> 箭头。
 
     箭头那一格优先于身子，所以头尾重合时看到的是箭头 —— 这正是玩家看到的。
     """
@@ -45,7 +45,7 @@ def ascii_map(level):
 def describe(level, order):
     """把通关顺序翻译成「(第几行,第几列)朝某方向」的可读文本。
 
-    order 里是一支支 Piece（不是坐标）：管道占好几格，只说坐标说明不了是谁，
+    order 里是一支支 Piece（不是坐标）：箭头占好几格，只说坐标说明不了是谁，
     所以报的是**箭头那一格 + 箭头方向**。
     """
     parts = []
@@ -57,7 +57,7 @@ def describe(level, order):
 
 def print_level(level, item, index_label):
     """把一关的棋盘与结论打印出来（教学关和编号关卡共用）。"""
-    print("%s   棋盘 %s   管道 %2d 支   密度 %.2f   开局可点 %d 支"
+    print("%s   棋盘 %s   箭头 %2d 支   密度 %.2f   开局可点 %d 支"
           % (index_label, item["size"], item["arrows"], item["density"], item["free"]))
     print("         难度 %s   生命值 %d 颗   本关满分 %s"
           % ("★" * item["stars"], item["max_hp"],
@@ -75,7 +75,7 @@ def print_level(level, item, index_label):
 
 def markdown_table(items):
     """按 Markdown 表格打印汇总。"""
-    print("| 关卡 | 名称 | 棋盘 | 管道数 | 铺满率 | 开局可点 | 难度 | 生命值 | 本关满分 | 是否可解 |")
+    print("| 关卡 | 名称 | 棋盘 | 箭头数 | 铺满率 | 开局可点 | 难度 | 生命值 | 本关满分 | 是否可解 |")
     print("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     for item in items:
         label = "教学关（独立入口）" if item["tutorial"] else "第%d关" % item["index"]
@@ -140,7 +140,7 @@ def main():
         print("难度参考：棋盘逐关放大，最大的一关是第 %d 关 %s（%d 格）；"
               % (biggest + 1, report[biggest]["size"],
                  LEVELS[biggest].rows * LEVELS[biggest].cols))
-        print("          管道逐关变多（%d → %d 支），开局可点的反而从 %d 支收到 %d 支。"
+        print("          箭头逐关变多（%d → %d 支），开局可点的反而从 %d 支收到 %d 支。"
               % (report[0]["arrows"], report[-1]["arrows"],
                  report[0]["free"], report[-1]["free"]))
         print("          出口更少、要扫的射线更长，这才是难度真正的来源。")

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""关卡生成器：批量产出「密集铺满 + 必然可解」的管道箭布局。
+"""关卡生成器：批量产出「密集铺满 + 必然可解」的箭头箭布局。
 
 核心思路是**逆向构造**：把「消除顺序」倒过来当「放置顺序」。
 
@@ -59,10 +59,10 @@ def grow_backward(grid, head, direction, rows, cols, rng, max_len, straight_bias
 
     第一步必须沿 -direction，保证「最后一段和箭头方向一致」。
     之后可以在「继续直行」和「转向」里随机挑，直行概率高一点，
-    这样出来的形状以长条 + 少量拐弯为主，接近参照画面里的管道。
+    这样出来的形状以长条 + 少量拐弯为主，接近参照画面里的箭头。
 
-    有一条硬禁区：**不许长到箭头正前方那条射线上去**。管道是从箭头往回长的，
-    绕一圈之后完全可能把尾巴甩到箭头前面，那就成了「箭头指着自己的管子」——
+    有一条硬禁区：**不许长到箭头正前方那条射线上去**。箭头是从箭头往回长的，
+    绕一圈之后完全可能把尾巴甩到箭头前面，那就成了「箭头指着自己的箭身」——
     画面上像打了个死结，规则上也永远飞不出去（见 pieces.faces_own_body）。
     """
     cells = [head]
@@ -181,7 +181,7 @@ def generate(rows, cols, seed=0, max_len=8, max_pieces=None, ray_bias=3.0):
 
 
 def to_ascii(rows, cols, pieces):
-    """把布局画成 ASCII：. 空格 / o 管道身子 / ^v<> 箭头那一格。"""
+    """把布局画成 ASCII：. 空格 / o 箭头身子 / ^v<> 箭头那一格。"""
     grid = [["."] * cols for _ in range(rows)]
     for piece in pieces:
         for row, col in piece.cells:
@@ -193,7 +193,7 @@ def to_ascii(rows, cols, pieces):
 
 
 def fill_ratio(rows, cols, pieces):
-    """铺满率：被管道占掉的格子占棋盘的比例。"""
+    """铺满率：被箭头占掉的格子占棋盘的比例。"""
     used = sum(piece.length for piece in pieces)
     return used / float(rows * cols)
 
@@ -202,7 +202,7 @@ def report(rows, cols, pieces, index=None):
     """打印一份可读的关卡报告。"""
     head = "第 %d 关" % index if index is not None else "候选布局"
     order = solve_level(rows, cols, pieces)
-    print("%s  %d×%d  管道 %d 支  占格 %d/%d（%.0f%%）  开局可点 %d  可解：%s"
+    print("%s  %d×%d  箭头 %d 支  占格 %d/%d（%.0f%%）  开局可点 %d  可解：%s"
           % (head, rows, cols, len(pieces),
              sum(p.length for p in pieces), rows * cols,
              fill_ratio(rows, cols, pieces) * 100,

@@ -14,7 +14,7 @@
   * 脚本用**临时目录里的存档**，不会动你自己那份 progress.json；
   * 悬停、撞击这类画面要精确定位到某一格，所以一律**按状态找目标**
     （先问棋盘「哪一支被挡住了」再悬停过去），不写死坐标——
-    关卡数据一改，写死的坐标就会静默指向别的管道，截出来的图还是"能看"的，
+    关卡数据一改，写死的坐标就会静默指向别的箭头，截出来的图还是"能看"的，
     只是已经不能说明它要说明的那件事了。
 
 还有一件事得先做：关卡的铺满率在 92% 以上，**开局盘面上几乎没有空格**。
@@ -83,9 +83,9 @@ def settle(game, seconds):
 
 
 def hover(game, piece):
-    """把鼠标"移动"到这支管道的尾格上，触发路径高亮。
+    """把鼠标"移动"到这支箭头的尾格上，触发路径高亮。
 
-    点管道身上任意一格都算选中它，所以悬停哪一格都一样，取尾格只是方便。
+    点箭头身上任意一格都算选中它，所以悬停哪一格都一样，取尾格只是方便。
     """
     game.mouse_pos = game.cell_rect(*piece.tail).center
     game.update_hover()
@@ -170,7 +170,7 @@ def main():
     game.draw()
     save(screen, "shot-06-hover-clear.png")
 
-    # -------- 7. 撞击反馈：点一支被挡住的管道（抓动画中间帧） --------
+    # -------- 7. 撞击反馈：点一支被挡住的箭头（抓动画中间帧） --------
     open_gap(game, HOVER, GAP_BALANCE_HOVER)
     blocked = find_blocked(game.board)
     game.click_cell(*blocked.cells[0])
@@ -179,7 +179,7 @@ def main():
     game.draw()
     save(screen, "shot-07-collision.png")
 
-    # -------- 8. 飞出动画：整条管道滑出棋盘（抓中间帧） --------
+    # -------- 8. 飞出动画：整条箭头滑出棋盘（抓中间帧） --------
     open_gap(game, CHAIN, GAP_BALANCE_CHAIN)
     free = find_free(game.board)
     hover(game, free)
@@ -214,13 +214,13 @@ def main():
     game.draw()
     save(screen, "shot-11-all-clear.png")
 
-    # -------- 12. 最难的一关：26×18 棋盘铺满管道，悬停显示被挡住的路径 --------
+    # -------- 12. 最难的一关：26×18 棋盘铺满箭头，悬停显示被挡住的路径 --------
     open_gap(game, FINAL, GAP_BALANCE_FINAL)
     hover(game, find_blocked(game.board))
     game.draw()
     save(screen, "shot-12-final-level.png")
 
-    # -------- 13. 提示：高亮一支「点掉它最能解锁局面」的管道 --------
+    # -------- 13. 提示：高亮一支「点掉它最能解锁局面」的箭头 --------
     game.start_level(HOVER)
     unhover(game)
     game.use_hint()
@@ -228,7 +228,7 @@ def main():
     game.draw()
     save(screen, "shot-13-hint.png")
 
-    # -------- 14. 辅助线：给每支管道画出它箭头前方的去路 --------
+    # -------- 14. 辅助线：给每支箭头画出它箭头前方的去路 --------
     open_gap(game, FINAL, GAP_GUIDES_FINAL)
     game.toggle_guides()
     game.toast_timer = 0.0           # 气泡会盖住棋盘，截图里不需要它

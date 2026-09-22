@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""界面绘制工具：字体、文字、按钮、管道棋子。
+"""界面绘制工具：字体、文字、按钮、箭头棋子。
 
 所有函数都只依赖 Surface 与普通数值，因此 app.py 与截图脚本可以复用同一套绘制代码。
 """
@@ -196,7 +196,7 @@ def draw_check(surface, center, size, color=None):
 
 # ------------------------------------------------------------------ 生命值（像素心）
 # 生命值图标是一颗「像素心」：不写汉字、也不是圆滑的矢量心形，
-# 和整套界面的硬边管道是同一种质感（图形定义见 config.HEART_PIXEL_ART）。
+# 和整套界面的硬边箭头是同一种质感（图形定义见 config.HEART_PIXEL_ART）。
 _heart_cache = {}
 HEART_COLS = len(config.HEART_PIXEL_ART[0])
 HEART_ROWS = len(config.HEART_PIXEL_ART)
@@ -317,13 +317,13 @@ def darken(color, ratio):
     return mix_color(color, (0, 0, 0), ratio)
 
 
-# ------------------------------------------------------------------ 管道棋子
-# 一支「箭」不是一格里的一个箭头，而是一条**占多格的粗管道**，末端一个箭头
+# ------------------------------------------------------------------ 箭头棋子
+# 一支「箭」不是一格里的一个箭头，而是一条**占多格的粗箭头**，末端一个箭头
 # （形状与规则见 pieces.py）。所以这里的绘制单位是「一整支箭」：
 # 先把一支箭渲染成一张贴图，再整张贴到棋盘上。
 #
 # 为什么按「支」而不是按「格」画：
-#   * 管道是折线，逐格画会让相邻格的圆头叠出一圈圈痕迹；
+#   * 箭头是折线，逐格画会让相邻格的圆头叠出一圈圈痕迹；
 #   * 飞出动画只需要把这张贴图整体位移，不用重画；
 #   * 同一支箭在一局里要贴几十帧，缓存下来只算一次。
 _piece_cache = {}
@@ -337,7 +337,7 @@ SUPERSAMPLE = 3                 # 先用 3 倍尺寸画，再缩回去——pyga
 
 
 def _paint_pipe(surface, points, direction, color, width, head_len, span):
-    """在 surface 上把一条折线画成粗管道，末端加一个箭头。
+    """在 surface 上把一条折线画成粗箭头，末端加一个箭头。
 
     points 是各格中心的屏幕坐标（tail -> head 顺序），三个尺寸参数都用像素。
     同一个函数会被调用两遍：先用「更粗 + 更暗」画一遍当描边，
@@ -389,7 +389,7 @@ def build_piece_surface(cells, direction, color, cell):
     points = [(((col - min_col + 0.5) * cell + pad) * scale,
                ((row - min_row + 0.5) * cell + pad) * scale) for row, col in cells]
 
-    # 第一遍：描边。比本色暗一档、粗一圈——同色系管道挨在一起时靠它分得开。
+    # 第一遍：描边。比本色暗一档、粗一圈——同色系箭头挨在一起时靠它分得开。
     grow = 1.0 + config.PIECE_OUTLINE_RATIO
     _paint_pipe(big, points, direction,
                 mix_color(color, (0, 0, 0), config.PIECE_OUTLINE_DARKEN),
@@ -436,7 +436,7 @@ def draw_piece(surface, origin, piece, cell, alpha=255, offset=(0, 0)):
 
 
 def path_joints(piece, cell, advance):
-    """整条管道沿自身路径滑行 advance 像素后，各折点的棋盘局部坐标。
+    """整条箭头沿自身路径滑行 advance 像素后，各折点的棋盘局部坐标。
 
     路径 = 各格中心连成的折线（tail -> head），过箭头后沿箭头方向直线延长。
     每个折点原来的弧长是 k*cell（tail 为 0），整体加上 advance 再落回路径上——
@@ -464,7 +464,7 @@ def path_joints(piece, cell, advance):
 
 
 def draw_piece_path(surface, origin, piece, cell, advance):
-    """飞出动画专用：管道沿自身路径滑出，弯折跟着往前流（不是整张平移）。
+    """飞出动画专用：箭头沿自身路径滑出，弯折跟着往前流（不是整张平移）。
 
     直接往 surface 上画两遍（描边 + 本色），不走贴图缓存——贴图是刚体，
     表达不了「弯折在移动」。surface 已被调用方 set_clip 到棋盘视口，
@@ -490,7 +490,7 @@ _glow_cache = {}
 
 
 def clear_caches():
-    """清空字体 / 管道 / 像素心 / 光晕贴图的缓存。
+    """清空字体 / 箭头 / 像素心 / 光晕贴图的缓存。
 
     什么时候需要它：pygame.quit() 之后又重新 init 的场景（比如测试里一个用例组
     退出 pygame、下一个用例组还要画图）。缓存里的 Font 与 Surface 在 quit 时
@@ -843,7 +843,7 @@ class IconButton:
 
     * **没有描边**，底色就是一整块圆角实心色，悬停时整体提亮。
       描边按钮一排摆开像一排框子，参考图里那种干净的圆钮更好看，
-      也让画面上的"框"都留给真正需要强调的东西（比如悬停的那一支管道）。
+      也让画面上的"框"都留给真正需要强调的东西（比如悬停的那一支箭头）。
     * **开关类按钮**（toggle=True）用 self.on 表示当前是否开启，
       开启时底色换成强调蓝，不用读文字就知道状态。
 

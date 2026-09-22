@@ -92,7 +92,7 @@ PANEL_WIDTH = 460
 PANEL_HEIGHT = 440
 
 # 玩法说明里的两个迷你棋盘（5 列 2 行）：
-#   上面那个演示「前方有管道 → 飞不出去」，下面那个演示「前方空 → 飞出去」
+#   上面那个演示「前方有箭头 → 飞不出去」，下面那个演示「前方空 → 飞出去」
 #
 # 两处演示都刻意只让**一支**箭处在「被讨论」的位置，另一支（如果有）箭头朝棋盘外，
 # 保证「挡」的那张图里被挡住的只有橙色那支、「通」的那张图里只有绿色那支。
@@ -104,7 +104,7 @@ DEMO_ROWS, DEMO_COLS = 2, 5
 DEMO_BLOCKED_SPECS = ("0,1 v D", "1,3 < L")
 #  绿色：横着占满一行、箭头朝右（朝棋盘外）→ 一路畅通
 DEMO_CLEAR_SPECS = ("1,0 > R4",)
-DEMO_BLOCKED_CAPTION = "橙色这支箭头前方压着绿色管道 → 飞不出去"
+DEMO_BLOCKED_CAPTION = "橙色这支箭头前方压着绿色箭头 → 飞不出去"
 DEMO_CLEAR_CAPTION = "这支箭头前方一路是空的 → 整条飞出棋盘并消失"
 # 说明文字里点名了颜色，所以这两支的颜色**写死**在这里，
 # 不能用 PIECE_PALETTE[index*3] 那种按序号取色的写法——
@@ -351,9 +351,9 @@ class Game:
     def sync_tutorial(self):
         """让引导步骤与棋盘的实际状态对齐。
 
-        玩家完全可能不按提示点（甚至提前把后面的管道消掉），
+        玩家完全可能不按提示点（甚至提前把后面的箭头消掉），
         所以每一步在展示前都要检查一次：目标还在吗？这一步还成立吗？
-        不成立就直接跳过，避免出现「让你点一个已经飞走的管道」这种尴尬。
+        不成立就直接跳过，避免出现「让你点一个已经飞走的箭头」这种尴尬。
         """
         if not self.level.tutorial or self.board is None:
             return
@@ -381,7 +381,7 @@ class Game:
         """某一步被正确完成后，推进到下一步。
 
         clicked 是玩家真正点到的那支，step_piece 是这一步希望点的那支——
-        两者必须是同一支；玩家点了别的管道不算完成这一步。
+        两者必须是同一支；玩家点了别的箭头不算完成这一步。
         """
         if not self.level.tutorial or self.tutorial_done:
             return
@@ -644,7 +644,7 @@ class Game:
 
     # ------------------------------------------------------------ 提示 / 辅助线
     def best_hint(self):
-        """在「当前能飞出的管道」里挑一支最值得点的，返回那支箭；没有则 None。
+        """在「当前能飞出的箭头」里挑一支最值得点的，返回那支箭；没有则 None。
 
         挑选标准是「消掉它之后能连带解锁多少支其它的」，取最多的那支。
         为什么不随便挑一支能飞的：能飞的里面，有的点掉只是少一支，
@@ -681,18 +681,18 @@ class Game:
         return best
 
     def use_hint(self):
-        """「提示」按钮：高亮一支当前能飞出的管道，几秒后自己消失。"""
+        """「提示」按钮：高亮一支当前能飞出的箭头，几秒后自己消失。"""
         if self.scene != SCENE_PLAY or self.board is None or self.overlay is not None:
             return
         piece = self.best_hint()
         if piece is None:
-            self.show_toast("当前没有能飞出去的管道，先重新开始吧", config.COLOR_WARN)
+            self.show_toast("当前没有能飞出去的箭头，先重新开始吧", config.COLOR_WARN)
             return
         self.hint_piece = piece
         self.hint_timer = config.HINT_DURATION
 
     def toggle_guides(self):
-        """「辅助线」开关：给每支管道画出它箭头前方的射线。
+        """「辅助线」开关：给每支箭头画出它箭头前方的射线。
 
         两个状态用的是**同一个颜色**，它只帮玩家把方向关系看清楚，
         不替玩家判断能不能点——真要按能否飞出上色，等于把答案画在脸上。
@@ -700,7 +700,7 @@ class Game:
         self.show_guides = not self.show_guides
         self.buttons = self.make_play_buttons()      # 重建才能把开关状态同步到圆钮
         if self.show_guides:
-            self.show_toast("辅助线已打开：每支管道前方的虚线就是它的去路",
+            self.show_toast("辅助线已打开：每支箭头前方的虚线就是它的去路",
                             config.COLOR_TEXT_DIM)
         else:
             self.show_toast("辅助线已关闭", config.COLOR_TEXT_DIM)
@@ -960,7 +960,7 @@ class Game:
                 self.cell_rect(head_row, head_col)))
             # 扣生命值的提示是一颗「碎掉的像素心」，不是「失去一心」四个字：
             # 生命值本身就用心的形状表示，心碎的画面一看就懂，
-            # 也不至于和「这里没有管道」那句文字提示混成同一类消息。
+            # 也不至于和「这里没有箭头」那句文字提示混成同一类消息。
             # 心形是 10 格宽的像素图，宽度取 10 的整数倍，每格才是整数像素
             self.floats.append(anim.FloatingHeart(
                 (rect.centerx, rect.centery - rect.height * 0.08),
@@ -970,14 +970,14 @@ class Game:
             self.hp_lost_flash = 1.0        # 让刚失去的那颗心闪一下
         elif result.kind == CLICK_EMPTY:
             self.floats.append(anim.FloatingText(
-                "这里没有管道", (rect.centerx, rect.centery - 18),
+                "这里没有箭头", (rect.centerx, rect.centery - 18),
                 config.COLOR_TEXT_FAINT, size=17, duration=0.7, rise=22))
 
         self.advance_tutorial(result, clicked, step_piece)
         return result
 
     def fly_travel(self, piece):
-        """沿自身路径要滑多远（像素），整条管道才能完全离开棋盘视口。
+        """沿自身路径要滑多远（像素），整条箭头才能完全离开棋盘视口。
 
         滑出时身体每一点沿路径前进相同的弧长；某点滑过箭头之后，
         就沿着箭头方向直线走出视口。所以总弧长 =
@@ -1088,7 +1088,7 @@ class Game:
         center_x = self.width // 2
         ui.draw_text(self.screen, "一箭又一箭", (center_x, 116),
                      size=52, bold=True, anchor="center")
-        ui.draw_text(self.screen, "点一下管道，让它飞出棋盘", (center_x, 168),
+        ui.draw_text(self.screen, "点一下箭头，让它飞出棋盘", (center_x, 168),
                      size=18, color=config.COLOR_TEXT_DIM, anchor="center")
 
         # 进度一行（顺带报一下总分：目标感主要来自分数的增长）
@@ -1128,10 +1128,10 @@ class Game:
                      size=20, bold=True, color=config.COLOR_PANEL_TEXT)
 
         rules = (
-            "① 一支「箭」是一条占好几格的管道，末端那个箭头就是它的朝向。",
-            "② 点它身上任意一格：箭头前方是空的，整条管道就飞出去。",
-            "③ 前方还有别的管道挡着，就飞不出去，并且失去",
-            "④ 清空本关所有管道即可通关；剩下的生命值越多，本关得分越高。",
+            "① 一支「箭」是一条占好几格的箭头，末端那个箭头就是它的朝向。",
+            "② 点它身上任意一格：箭头前方是空的，整条箭头就飞出去。",
+            "③ 前方还有别的箭头挡着，就飞不出去，并且失去",
+            "④ 清空本关所有箭头即可通关；剩下的生命值越多，本关得分越高。",
             "⑤ 生命值耗尽本关失败；通关才解锁下一关，得分与进度都会自动保存。",
         )
         y = card.y + 52
@@ -1160,7 +1160,7 @@ class Game:
         self.draw_demo_row(demo_x, card.y + 326, DEMO_CLEAR_SPECS,
                            DEMO_CLEAR_CAPTION, config.COLOR_SUCCESS)
 
-        ui.draw_text(self.screen, "把鼠标放在管道上，还能看到它前方的路径：绿色=畅通，红色=被挡。",
+        ui.draw_text(self.screen, "把鼠标放在箭头上，还能看到它前方的路径：绿色=畅通，红色=被挡。",
                      (card.x + 24, card.y + 402), size=13,
                      color=config.COLOR_PANEL_TEXT_DIM)
 
@@ -1251,7 +1251,7 @@ class Game:
                      size=18, bold=True, color=title_color)
 
         # 规格：顺手把本关给几颗心写出来，玩家开局前就知道这一关能错几次
-        ui.draw_text(self.screen, "%d×%d · %d 支管道 · %d 颗心" % (
+        ui.draw_text(self.screen, "%d×%d · %d 支箭头 · %d 颗心" % (
             level.rows, level.cols, level.arrow_count, level.max_hp),
             (rect.x + 14, rect.y + 78), size=12,
             color=config.COLOR_TEXT_FAINT)
@@ -1272,11 +1272,6 @@ class Game:
         ui.draw_text(self.screen, status, (rect.x + 14, rect.y + 108), size=13,
                      color=status_color)
 
-        # 左下角：开局能直接点几支（越少越难，这是本作真正的难度指标）
-        ui.draw_text(self.screen, "开局可点 %d 支" % level.free_count,
-                     (rect.x + 14, rect.y + 140), size=12,
-                     color=config.COLOR_TEXT_FAINT)
-
         # 右上角：锁 / 星星 / 对勾
         if not unlocked:
             ui.draw_lock(self.screen, (rect.right - 26, rect.y + 26), 18)
@@ -1289,7 +1284,7 @@ class Game:
     # ---------------------------------------------------------------- 游戏界面
     def draw_play(self):
         self.draw_board()
-        # 飞出动画要一起被视口裁住，否则整条管道会飞过顶栏、在信息栏上滑过去
+        # 飞出动画要一起被视口裁住，否则整条箭头会飞过顶栏、在信息栏上滑过去
         previous_clip = self.screen.get_clip()
         self.screen.set_clip(self.viewport_rect)
         for effect in self.animations:
@@ -1338,7 +1333,7 @@ class Game:
                      size=16, color=config.COLOR_TEXT_DIM, anchor="midleft")
 
     def draw_hud_info(self):
-        """信息行：计时 / 生命值 / 剩余管道 / 本关得分，四项横排、整体居中。
+        """信息行：计时 / 生命值 / 剩余箭头 / 本关得分，四项横排、整体居中。
 
         为什么不写死 x 坐标：这一行里心数随关卡变化（4~7 颗）、得分位数也会变，
         固定坐标每动一点内容就要重新人工核算会不会压在一起。
@@ -1381,7 +1376,7 @@ class Game:
                      color=config.COLOR_TEXT_DIM, anchor="midleft")
         x += hp_w + HUD_INFO_GAP
 
-        # 3) 剩余管道
+        # 3) 剩余箭头
         ui.draw_text(self.screen, "剩余", (x, HUD_ROW_Y), size=14,
                      color=config.COLOR_TEXT_DIM, anchor="midleft")
         ui.draw_text(self.screen, str(board.remaining),
@@ -1416,11 +1411,11 @@ class Game:
         """画棋盘。
 
         这一版**不画底格**（对齐参考画面）：棋盘就是深色底上一片极淡的点阵，
-        管道是画面上最亮的东西。
+        箭头是画面上最亮的东西。
 
-        为什么去掉底格：这个游戏的难度来自「在一堆管道里找出能点的那支」，
+        为什么去掉底格：这个游戏的难度来自「在一堆箭头里找出能点的那支」，
         而几十个空格子的方框会让视线一直被拽住，那是"乱"不是"难"。
-        把底格换成点阵之后，棋盘范围照样看得出来，管道却跳出来了。
+        把底格换成点阵之后，棋盘范围照样看得出来，箭头却跳出来了。
         """
         board = self.board
         view = self.viewport_rect
@@ -1435,7 +1430,7 @@ class Game:
         if hovered is not None and board.state == STATE_PLAYING:
             # 被挡时路径只画到挡路那一格为止——那之后的格子跟「为什么飞不出去」
             # 没关系。截断由 board.path_to_blocker 负责，界面这里不要自己
-            # 拿 blocker.head 去 index()：挡路的通常是那支管道的**身子**，
+            # 拿 blocker.head 去 index()：挡路的通常是那支箭头的**身子**，
             # 它的箭头可能在很远的另一头，那样写会直接抛 ValueError。
             path, blocker_piece = board.path_to_blocker(hovered)
             if blocker_piece is not None:
@@ -1451,8 +1446,8 @@ class Game:
         previous_clip = self.screen.get_clip()
         self.screen.set_clip(view)
 
-        # 1) 点阵：只在空格子上画。有管道的位置不需要点，
-        #    否则会在管道的圆角边上露出半颗点，看着像脏东西。
+        # 1) 点阵：只在空格子上画。有箭头的位置不需要点，
+        #    否则会在箭头的圆角边上露出半颗点，看着像脏东西。
         for row in range(board.rows):
             for col in range(board.cols):
                 if board.piece_at(row, col) is None:
@@ -1468,11 +1463,11 @@ class Game:
                 self.screen, rect.inflate(-inset * 2, -inset * 2), path_color,
                 config.COLOR_PATH_ALPHA, radius=max(3, config.CELL_RADIUS - 4))
 
-        # 3) 辅助线画在管道**下面**：它是背景信息，不该压住管道本身
+        # 3) 辅助线画在箭头**下面**：它是背景信息，不该压住箭头本身
         if self.show_guides:
             self.draw_guides()
 
-        # 4) 管道本身
+        # 4) 箭头本身
         for piece in board.pieces:
             if board.piece_at(*piece.head) is not piece and board.piece_at(*piece.head) is None:
                 continue                                  # 已经飞走了
@@ -1484,7 +1479,7 @@ class Game:
         if len(path_centers) > 1:
             self.draw_path_flow(path_centers, path_color)
 
-        # 6) 各种"环"统一放在最后画：先画的会被后面几支管道压掉边角，
+        # 6) 各种"环"统一放在最后画：先画的会被后面几支箭头压掉边角，
         #    看上去像缺了一块。
         #    挡路的那一支**只圈住挡路的那一格**：整支圈起来会跟悬停环糊成
         #    一片红蓝交错的框，而玩家真正想知道的是「是哪一格挡着我」——
@@ -1505,15 +1500,15 @@ class Game:
 
     # ---------------------------------------------------------------- 辅助线 / 提示环
     def guide_segment(self, piece):
-        """算出一支管道的辅助线两端点（屏幕坐标）；这支已经飞走则返回 None。
+        """算出一支箭头的辅助线两端点（屏幕坐标）；这支已经飞走则返回 None。
 
         起点是**箭头末端所在的那条格边**，不是格子中心：线从箭头的尖端接上去
         才连贯，也不会糊在箭头自己身上。
 
-        终点分两种：前方有管道就指到**挡路那一格的中心**，前方没有就一路画到棋盘边。
+        终点分两种：前方有箭头就指到**挡路那一格的中心**，前方没有就一路画到棋盘边。
 
         为什么终点取"挡路那一格的中心"而不是它的入口格线：盘面是铺满的
-        （铺满率 93% 以上），大多数管道的去路只有一格，停在入口格线的话线长
+        （铺满率 93% 以上），大多数箭头的去路只有一格，停在入口格线的话线长
         正好是 0——辅助线在密铺盘面上等于什么都没画。取中心既有半格可画
         （看得见），又仍然指着"挡我的就是这一格"。
 
@@ -1539,7 +1534,7 @@ class Game:
         }[piece.direction]
 
     def draw_guides(self):
-        """辅助线：给每支管道画一条朝它箭头方向延伸的虚线。
+        """辅助线：给每支箭头画一条朝它箭头方向延伸的虚线。
 
         两端怎么算见 `guide_segment`。两种终点**用同一个颜色**是刻意的：
         这条线的用途是帮玩家看清方向关系，不是替玩家判断。
@@ -1558,7 +1553,7 @@ class Game:
                                 width=max(1, int(self.cell * 0.09)))
 
     def draw_cell_ring(self, rect, color, alpha_ratio, width=None):
-        """给单独一格套一圈描边（整支管道的高亮就是逐格调用它拼出来的）。"""
+        """给单独一格套一圈描边（整支箭头的高亮就是逐格调用它拼出来的）。"""
         if width is None:
             width = max(2, int(self.cell * 0.11))
         grow = max(2, int(self.cell * 0.12))
@@ -1567,7 +1562,7 @@ class Game:
                                  int(255 * alpha_ratio), radius=radius, width=width)
 
     def draw_piece_ring(self, piece, color, alpha_ratio, width=None):
-        """给一整支管道套一圈描边（逐格画，所以弯折处也是贴着形状的）。"""
+        """给一整支箭头套一圈描边（逐格画，所以弯折处也是贴着形状的）。"""
         for row, col in piece.cells:
             self.draw_cell_ring(self.cell_rect(row, col), color, alpha_ratio, width)
 
@@ -1684,19 +1679,19 @@ class Game:
 
         if self.in_tutorial and self.overlay == OVERLAY_TUTORIAL_DONE:
             title, color = "教学结束！", config.COLOR_SUCCESS
-            desc = "玩法就是这些：清空本关的管道即可通关"
+            desc = "玩法就是这些：清空本关的箭头即可通关"
         elif self.in_tutorial:
             title, color = "再试一次", config.COLOR_WARN
             desc = "生命值用完了——教学关不计分也不占编号，重来一遍就好"
         elif self.overlay == OVERLAY_WIN:
             title, color = "通关！", config.COLOR_SUCCESS
-            desc = "第 %d 关「%s」的管道全部飞出了棋盘" % (self.level_index + 1, self.level.name)
+            desc = "第 %d 关「%s」的箭头全部飞出了棋盘" % (self.level_index + 1, self.level.name)
         elif self.overlay == OVERLAY_FAIL:
             title, color = "本关失败", config.COLOR_DANGER
             desc = "生命值已经耗尽，本关不得分，再试一次吧"
         else:
             title, color = "全部通关！", config.COLOR_SUCCESS
-            desc = "%d 个关卡的管道都被你清理干净了" % TOTAL_LEVELS
+            desc = "%d 个关卡的箭头都被你清理干净了" % TOTAL_LEVELS
 
         ui.draw_text(self.screen, title, (panel.centerx, panel.y + 52),
                      size=40, color=color, bold=True, anchor="center")
@@ -1706,14 +1701,14 @@ class Game:
         if self.in_tutorial:
             # 教学关没有得分这一格——它不进任何纪录；用时还是值得给玩家看一眼的
             stats = [
-                ("本关管道", "%d 支" % self.board.total, False),
+                ("本关箭头", "%d 支" % self.board.total, False),
                 ("失去生命值", "%d 颗" % self.board.hearts_lost, False),
                 ("本关用时", self.time_text(), False),
-                ("开局可点", "%d 支" % self.level.free_count, False),
+                ("本关得分", "不计分", False),
             ]
         else:
             stats = [
-                ("本关管道", "%d 支" % self.board.total, False),
+                ("本关箭头", "%d 支" % self.board.total, False),
                 ("失去生命值", "%d 颗" % self.board.hearts_lost, False),
                 ("本关用时", self.time_text(), False),
                 ("本关得分", "%d / %d" % (self.last_score, self.score_max), True),
@@ -1800,7 +1795,7 @@ class Game:
 
         - 关卡总览：靠底部，避开那一排关卡卡片；
         - 关卡里：贴着顶栏下沿。棋盘是满屏的，哪里都会盖住一点，
-          但顶栏下面那条带子离玩家的视线中心最远，挡住的也通常是最上一排管道；
+          但顶栏下面那条带子离玩家的视线中心最远，挡住的也通常是最上一排箭头；
         - 其余（主菜单 / 设置）：正中，本来就是静态界面。
         """
         if self.scene == SCENE_LEVELS:

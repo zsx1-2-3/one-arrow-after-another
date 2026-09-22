@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """演示素材（截图 / 演示动图）共用的「取景」逻辑。
 
-两个脚本都要回答同一类问题：「棋盘上现在哪一支管道最能说明这件事？」
-答案不能写死坐标——关卡数据一改，写死的坐标会静默指向别的管道，
+两个脚本都要回答同一类问题：「棋盘上现在哪一支箭头最能说明这件事？」
+答案不能写死坐标——关卡数据一改，写死的坐标会静默指向别的箭头，
 截出来的图还是"能看"的，只是已经不能说明它要说明的那件事了。
 所以这里一律**按状态找目标**。
 
@@ -30,23 +30,23 @@ from game.progress import Progress  # noqa: E402
 
 
 def find_blocked(board):
-    """找当前盘面上「被挡路径最长」的管道——悬停它，红色最长。"""
+    """找当前盘面上「被挡路径最长」的箭头——悬停它，红色最长。"""
     found = [p for p in board.pieces
              if board.piece_at(*p.head) is p and board.find_blocker(p) is not None]
     if not found:
-        raise RuntimeError("没有找到被挡住的管道")
+        raise RuntimeError("没有找到被挡住的箭头")
     return max(found, key=lambda p: (len(board.path_to_blocker(p)[0]), -p.head[0]))
 
 
 def find_free(board):
-    """找当前盘面上「射线最长且通畅」的管道——悬停它，绿色最长。
+    """找当前盘面上「射线最长且通畅」的箭头——悬停它，绿色最长。
 
     只挑射线长度 > 0 的：贴着边、箭头朝盘外的那类虽然也能飞，
     但射线是空的，画出来只有一个小箭头，说明不了"这条路一路空到盘外"。
     """
     free = [p for p in board.available_arrows() if len(board.path_cells(p)) > 0]
     if not free:
-        raise RuntimeError("没有找到射线通畅的管道")
+        raise RuntimeError("没有找到射线通畅的箭头")
     return max(free, key=lambda p: (len(board.path_cells(p)), -p.head[0]))
 
 
@@ -104,7 +104,7 @@ def plan_balance(level, max_steps=6, red_cap=4, green_cap=5):
 def plan_long_green(level, max_steps=6, floor=3):
     """找一个「绿路径尽量长」的局面，返回该点掉几支（k）。
 
-    拍「辅助线」这类图要用它：辅助线画的是每支管道的前方，盘面空档越多，
+    拍「辅助线」这类图要用它：辅助线画的是每支箭头的前方，盘面空档越多，
     这些线才拉得越长、越看得出是在讲「去路」；用 plan_balance 挑出来的
     局面为了照顾红路径会偏保守，辅助线就还是一堆小短线。
     floor 是及格线：达到就先收，避免为了多一格多点上好几步。
@@ -119,11 +119,11 @@ def plan_long_green(level, max_steps=6, floor=3):
 
 
 def same_piece(board, piece):
-    """在当前棋盘上按 uid 找回同一支管道（Piece 的 uid 在关卡内唯一）。"""
+    """在当前棋盘上按 uid 找回同一支箭头（Piece 的 uid 在关卡内唯一）。"""
     for candidate in board.pieces:
         if candidate.uid == piece.uid:
             return candidate
-    raise RuntimeError("棋盘上找不到 uid=%s 的管道" % piece.uid)
+    raise RuntimeError("棋盘上找不到 uid=%s 的箭头" % piece.uid)
 
 
 # ---------------------------------------------------------------- 存档
