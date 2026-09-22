@@ -50,7 +50,7 @@ from game.app import (DEMO_BLOCKED_CAPTION, DEMO_BLOCKED_SPECS,  # noqa: E402
 from game.board import (CLICK_BLOCKED, CLICK_EMPTY, CLICK_FLY,  # noqa: E402
                         CLICK_IGNORED, STATE_CLEARED, STATE_FAILED,
                         STATE_PLAYING, Board, count_free_pieces, solve_level)
-from game.levels import (HP_BY_STARS, LEVELS, TOTAL_LEVELS, TUTORIAL,  # noqa: E402
+from game.levels import (HP_BY_LEVEL, LEVELS, TOTAL_LEVELS, TUTORIAL,  # noqa: E402
                          Level, TutorialStep, validate_levels)
 from game.pieces import DIR_CHARS, DIRECTIONS, PIECE_PALETTE, Piece  # noqa: E402
 from game.progress import Progress  # noqa: E402
@@ -632,13 +632,17 @@ class LevelBalanceTestCase(unittest.TestCase):
             self.assertGreater(level.density, 0.90,
                                "「%s」铺满率只有 %.2f，看着太空" % (level.name, level.density))
 
-    def test_free_pieces_never_increase(self):
-        """开局可点数逐关不增：这是玩家真正感觉得到的难度。"""
+    def test_free_pieces_stay_in_bounds(self):
+        """开局可点数要待在合理区间：第 1 关好找，任何一关都不至于满盘乱点。
+
+        早年这里断言「逐关严格不增」，后来画面要求朝向均衡
+        （四个方向混着指），均衡的布局天然多开几个口，
+        可点数改成「整体收敛 + 区间约束」，难度阶梯由难度分用例把关。
+        """
         frees = [level.free_count for level in LEVELS]
-        for earlier, later in zip(frees, frees[1:]):
-            self.assertGreaterEqual(earlier, later, "开局可点数不该反弹：%r" % (frees,))
-        self.assertGreaterEqual(frees[0], 5, "第 1 关开局应当很好找")
-        self.assertLessEqual(frees[-1], 3, "最后一关开局应当很难找")
+        self.assertGreaterEqual(frees[0], 5, "第 1 关开局应当很好找：%r" % (frees,))
+        self.assertLessEqual(max(frees), 8, "不该有满盘都能点的关卡：%r" % (frees,))
+        self.assertLessEqual(max(frees[5:]), 7, "中后期不该满盘都能点：%r" % (frees,))
 
     def test_difficulty_and_stars_never_go_backwards(self):
         stars = [level.stars for level in LEVELS]
@@ -650,18 +654,22 @@ class LevelBalanceTestCase(unittest.TestCase):
         for earlier, later in zip(difficulties, difficulties[1:]):
             self.assertLess(earlier, later, "难度分应当逐关递增：%r" % (difficulties,))
 
-    def test_hp_follows_the_star_table(self):
-        for level in LEVELS:
-            self.assertEqual(level.max_hp, HP_BY_STARS[level.stars])
-        self.assertEqual(min(level.max_hp for level in LEVELS), 4)
-        self.assertEqual(max(level.max_hp for level in LEVELS), 7)
+    def test_hp_follows_the_level_table(self):
+        for index, level in enumerate(LEVELS, start=1):
+            self.assertEqual(level.hp, HP_BY_LEVEL[index - 1])
+            self.assertEqual(level.max_hp, HP_BY_LEVEL[index - 1])
+        # 1~4 关 3 颗心、5~9 关 4 颗心——比早年按星级给的 4~7 颗紧得多
+        self.assertEqual([level.max_hp for level in LEVELS],
+                         [3, 3, 3, 3, 4, 4, 4, 4, 4])
 
     def test_max_score_is_stars_times_300(self):
         for level in LEVELS:
             self.assertEqual(scoring.max_score(level), level.stars * 300)
 
     def test_total_max_score_is_stable(self):
-        self.assertEqual(scoring.total_max_score(LEVELS), 8400)
+        # 星级 1/1/1/2/3/4/4/4/5 × 300 = 7500。改关卡或调星级阈值时会立刻报警，
+        # 提醒把 README / 博客 / 测试报告里的总分一起改掉。
+        self.assertEqual(scoring.total_max_score(LEVELS), 7500)
 
     def test_level_rejects_invalid_specs_at_construction(self):
         """关卡数据写错时要在 import 阶段就炸，而不是等到玩家点进去。"""

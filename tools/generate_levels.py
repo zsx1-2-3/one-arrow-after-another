@@ -135,8 +135,18 @@ def sample_target(rng, mean_len, max_len):
     return max(2, min(max_len, target))
 
 
+# 朝向均衡：同一支方向放得越多，再放一支同向的罚分越重。
+# 罚的是「相对当前最少方向的差值」而不是绝对支数——这样不管盘面多满，
+# 永远有一个零罚分的方向，罚分差不会被整体抬高稀释。
+# 没有这条时「ray_bias 偏爱长射线」会让箭头集体朝棋盘长边指——实测
+# 第 4 关一度 70% 朝上、第 7 关 74% 朝下，四个方向挤成两个；
+# 参照画面里上下左右是均匀混着指的，观感差距很大。
+DIR_BALANCE_LINEAR = 12.0
+DIR_BALANCE_QUAD = 1.5
+
+
 def place_one(grid, rows, cols, rng, max_len, head_sample=36, path_tries=5,
-              ray_bias=3.0, target=None):
+              ray_bias=3.0, target=None, dir_counts=None):
     """在当前盘面上找一支最能填满棋盘的箭放下；找不到返回 None。
 
     返回 (cells, direction)，cells 是 tail -> head 顺序。
@@ -147,6 +157,9 @@ def place_one(grid, rows, cols, rng, max_len, head_sample=36, path_tries=5,
     ray_bias 的作用：放置时射线一定是通的，但**偏爱「朝盘内、射线更长」的方向**。
     朝盘外摆的箭（射线长 0）放在边上永远可点，会让开局可点数虚高、关卡变简单；
     把箭尽量朝里摆，后来者更容易挡住它，开局可点数就压下来了。
+
+    dir_counts 记录各方向已放几支（generate 负责维护），驱动朝向均衡罚分——
+    见 DIR_BALANCE_LINEAR / DIR_BALANCE_QUAD 的说明。
     """
     empty = [(r, c) for r in range(rows) for c in range(cols) if grid[r][c] == -1]
     if not empty:
@@ -170,17 +183,26 @@ def place_one(grid, rows, cols, rng, max_len, head_sample=36, path_tries=5,
         for _ in range(path_tries):
             direction = rng.choice(dirs)
             cells = grow_backward(grid, head, direction, rows, cols, rng, max_len)
-            # 打分：贴住目标长度；奖励「把憋的位置吃掉了」；再偏向朝盘内。
+            # 打分：贴住目标长度；奖励「把憋的位置吃掉了」；再偏向朝盘内；
+            # 最后按朝向均衡罚分——同方向比最少方向多出几支就罚几份。
             # 偏差一格罚 12 分，压得过 ray_bias 的方向分——长度贴目标
-            # 是硬要求，方向偏好只是软性倾向。
+            # 是硬要求，方向偏好只是软性倾向；朝向均衡罚分则专门对付
+            # 「满盘箭头都朝一头」的规律感。
             if target is None:
                 base = len(cells) * 10
             else:
                 base = -abs(len(cells) - target) * 12
             tight = sum(3 - empty_neighbours(grid, r, c, rows, cols) for r, c in cells)
+            if dir_counts:
+                dev = dir_counts.get(direction, 0) - min(dir_counts.values())
+                balance_penalty = (DIR_BALANCE_LINEAR * dev
+                                   + DIR_BALANCE_QUAD * dev * dev)
+            else:
+                balance_penalty = 0.0
             score = (base + tight
                      + ray_bias * ray_length(head, direction, rows, cols)
-                     + rng.random())
+                     + rng.random()
+                     - balance_penalty)
             if best is None or score > best[0]:
                 best = (score, cells, direction)
     if best is None:
@@ -198,11 +220,12 @@ def generate(rows, cols, seed=0, max_len=8, max_pieces=None, ray_bias=3.0,
     rng = random.Random(seed)
     grid = [[-1] * cols for _ in range(rows)]
     placed = []
+    dir_counts = {}                     # 各方向已放几支，喂给朝向均衡罚分
 
     while max_pieces is None or len(placed) < max_pieces:
         target = sample_target(rng, mean_len, max_len) if mean_len else None
         found = place_one(grid, rows, cols, rng, max_len, ray_bias=ray_bias,
-                          target=target)
+                          target=target, dir_counts=dir_counts)
         if found is None:
             break
         cells, direction = found
@@ -210,6 +233,7 @@ def generate(rows, cols, seed=0, max_len=8, max_pieces=None, ray_bias=3.0,
         for row, col in cells:
             grid[row][col] = index
         placed.append(Piece(cells=cells, direction=direction, uid=index))
+        dir_counts[direction] = dir_counts.get(direction, 0) + 1
 
     return placed
 

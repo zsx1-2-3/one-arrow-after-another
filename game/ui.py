@@ -365,13 +365,31 @@ def _paint_pipe(surface, points, direction, color, width, head_len, span):
     ])
 
 
+def piece_stroke_px(cell):
+    """箭身线宽（像素）：贴图渲染与飞出动画共用的唯一算法。
+
+    格距小（大盘关）维持 PIECE_STROKE_RATIO；格距大（前期小棋盘关，
+    格距被 CELL_MAX_SIDE 顶到 64）按幂函数收细有效比例，不然箭身
+    会粗到 25px 上下，和参照画面的细箭头不是同一个观感。
+    两处绘制走同一个函数，静态贴图和飞出动画的粗细才对得上。
+    """
+    cell = max(4.0, float(cell))
+    ref = config.PIECE_STROKE_REF_CELL
+    if cell <= ref:
+        ratio = config.PIECE_STROKE_RATIO
+    else:
+        ratio = (config.PIECE_STROKE_RATIO
+                 * (ref / cell) ** config.PIECE_STROKE_SHRINK)
+    return cell * ratio
+
+
 def build_piece_surface(cells, direction, color, cell):
     """把一支箭渲染成一张贴图，返回 (贴图, 相对棋盘左上角的偏移)。
 
     偏移的含义：贴到 `棋盘左上角 + 偏移` 就位，所以放大缩小时画面对得上。
     """
     cell = max(4, int(round(cell)))
-    stroke = cell * config.PIECE_STROKE_RATIO
+    stroke = piece_stroke_px(cell)
     head_len = cell * config.PIECE_HEAD_RATIO
     span = cell * config.PIECE_HEAD_SPAN
 
@@ -474,7 +492,7 @@ def draw_piece_path(surface, origin, piece, cell, advance):
     joints = [(origin[0] + x, origin[1] + y)
               for x, y in path_joints(piece, cell, advance)]
     color = piece_color(piece)
-    stroke = cell * config.PIECE_STROKE_RATIO
+    stroke = piece_stroke_px(cell)
     head_len = cell * config.PIECE_HEAD_RATIO
     span = cell * config.PIECE_HEAD_SPAN
     grow = 1.0 + config.PIECE_OUTLINE_RATIO
