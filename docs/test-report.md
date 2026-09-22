@@ -3,7 +3,7 @@
 本文件记录《一箭又一箭》的自动化测试结果与关卡可解性校验结果，对应作业要求中的
 「5. 测试要求」与「3.1 至少设计 3 个可以正常通关的关卡」。
 
-* 测试用例总数：**94 个，全部通过**
+* 测试用例总数：**103 个，全部通过**
 * 关卡校验：**教学关 + 9 个编号关卡全部可解**（`tools/verify_levels.py` 退出码 0）
 * 本文件里的输出全部是真实运行的结果，没有手工润色过的数字
 
@@ -30,12 +30,12 @@ python -m unittest discover -s tests -v
 ## 二、总体结果
 
 ```
-Ran 94 tests in 1.950s
+Ran 103 tests in 1.996s
 
 OK
 ```
 
-94 个用例全部通过，分为八组：
+103 个用例全部通过，分为八组：
 
 | 测试类 | 用例数 | 覆盖内容 |
 | --- | --- | --- |
@@ -45,8 +45,11 @@ OK
 | `ScoringTestCase` | 6 | 得分公式、完美奖励、失败 0 分、总分上限 |
 | `ColorSpreadTestCase` | 4 | 布局同色扎堆比例、打散后仍可解且没变简单 |
 | `ProgressTestCase` | 12 | 进度存档的读写、解锁计算、损坏容错、最高分 |
-| `GameFlowTestCase` | 30 | 场景切换、关卡总览、解锁链路、教学引导、T04~T06、结算面板 |
+| `GameFlowTestCase` | 39 | 场景切换、关卡总览、解锁链路、教学引导、T04~T06、结算面板、计时 / 提示 / 辅助线、界面分区 |
 | `VisualVarietyTestCase` | 12 | 四方向配色亮度、中文折行、背景动效、像素心图标 |
+
+> 用例数是从 `tests/test_game.py` 里现数的（按 `def test_` 前缀统计），
+> 不是沿用上一版的数字——项目每加一轮功能，这个数就会变。
 
 ---
 
@@ -193,12 +196,41 @@ OK
 | `test_same_color_blocks_stay_small` | 同方向的箭头不该连成一大块（最大 4 格） | ✅ |
 | `test_deshuffle_keeps_the_level_solvable_and_no_easier` | 打散工具只换方向：换完仍然可解，开局可点数不会变多 | ✅ |
 | `test_arrow_colors_are_still_decided_only_by_direction` | 打散配色只动关卡布局，不动调色板 | ✅ |
-| `test_hud_has_room_for_the_widest_level` | HUD 三组数字排得下：心最多的一关（7 颗）也不会顶到右边或压到得分 | ✅ |
+| `test_hud_has_room_for_the_widest_level` | 信息行四组内容（计时 / 生命值 / 剩余箭头 / 得分）按最宽情形算一遍，居中后不越界、也不压到提示条 | ✅ |
 | `test_wrap_text_keeps_punctuation_off_line_start` | 折行后不允许有行以收尾标点开头（中文排版的基本要求） | ✅ |
-| `test_background_actually_moves` | 背景要真的在动：星点会上飘，时间推进后画面像素确实变了 | ✅ |
-| `test_background_shows_a_shooting_star_sooner_or_later` | 流星按间隔出现，不会一直不出现 | ✅ |
+| `test_background_actually_moves` | 背景要真的在动：推进 3 秒后整屏像素确实变了 | ✅ |
+| `test_background_can_still_spawn_a_shooting_star` | 流星机制没烂掉：临时把间隔调短，它确实会被触发（跑完还原配置） | ✅ |
 | `test_every_scene_renders_with_background` | 三个场景都要能带着动态背景正常画出来 | ✅ |
 | `test_heart_surface_matches_the_grid` | 渲染出来的心和网格一一对应：格子在就是实心，不在就是透明 | ✅ |
+
+### 4.7 计时、提示与辅助线（这一版新加的三个小工具）
+
+| 用例 | 验证内容 | 结果 |
+| --- | --- | --- |
+| `test_play_clock_counts_up_and_resets_on_restart` | 计时从 0 开始、玩的时候往前走，重新开始要归零 | ✅ |
+| `test_play_clock_stops_once_the_level_is_over` | 本关分出胜负之后时钟就停住，不再往上涨 | ✅ |
+| `test_clock_text_formats_minutes_and_hours` | 计时文本是 MM:SS；超过一小时进位成 H:MM:SS，不会显示成 62:05 | ✅ |
+| `test_hint_picks_an_arrow_that_can_really_fly` | 提示指的那一支必须真的能飞出，且和暴力枚举出的最优解一致 | ✅ |
+| `test_hint_ring_fades_away_by_itself` | 提示环到时间自己消失，不会一直挂在棋盘上 | ✅ |
+| `test_hint_when_nothing_can_fly_gives_a_message` | 全场没有能飞的箭头时，提示不崩、给一句话 | ✅ |
+| `test_guides_toggle_keeps_the_button_in_sync` | 辅助线开关：逻辑状态、按钮上的 on 标记、渲染三者一致 | ✅ |
+| `test_guides_survive_a_restart` | 辅助线是玩家偏好，重开本关不该把它关掉 | ✅ |
+| `test_play_layout_areas_do_not_overlap` | 信息栏 / 提示条 / 棋盘 / 工具栏四块区域逐关算一遍，不许互相压住 | ✅ |
+
+**「提示」里的「最优」是怎么定义的。** 这个玩法有个性质：点掉一支能飞的箭头，
+只会让其它箭头的路更空，不会把自己玩死。所以提示挑的是
+「消掉它之后能连带解锁最多其它箭头」的那一支——第一步点对了，后面往往就顺了。
+测试就直接拿这条定义去对：临时把候选从格子上摘掉、数一遍还剩几支能飞、再放回去，
+最后和 `Game.best_hint()` 给出的坐标逐个比对。
+
+**辅助线为什么不按「能不能飞」上色。** 那条线只帮玩家看清方向关系；
+一旦畅通画绿、被挡画红，等于把答案画在脸上，这一局该有的思考就没了。
+所以两个状态用同一个颜色（`config.COLOR_GUIDE`），
+只有鼠标悬停某支箭头时，才用绿 / 红两色高亮那一条具体路径。
+
+**顺带记一笔棋盘的「去底格」改动。** 新版棋盘不再画每一格的底框，只有一片极淡的点阵
+（`app.draw_board()`）。原因是这个玩法的难度来自「在一堆箭头里找出能点的那支」，
+而几十个空方框会让视线一直被拽住——那是「乱」不是「难」。
 
 ## 五、边界与容错用例
 
@@ -225,105 +257,109 @@ OK
 ## 六、完整测试日志
 
 ```
-test_click_after_level_finished_is_ignored ... ok       本关结束后再点棋盘不再改变任何状态。
-test_click_empty_cell_is_harmless ... ok                点到空格子不扣生命值，也不改变棋盘。
-test_click_outside_board_is_ignored ... ok              点到棋盘外不会抛异常。
-test_corner_arrow_path_never_leaves_the_board ... ok    路径检测返回的坐标必须全部落在棋盘内。
-test_fail_when_hp_used_up ... ok                        生命值用尽后棋盘进入失败状态。
-test_hp_drops_one_per_blocked_click ... ok              点错一次固定扣 1 点生命值；扣到 0 就失败，且不会再往下扣成负数。
-test_reset_restores_the_level ... ok                    reset() 把箭头布局和生命值都恢复原样。
-test_t01_click_free_arrow_flies_out ... ok              T01 点击前方无阻挡的箭头 -> 箭头飞出棋盘并消失。
-test_t02_click_blocked_arrow_costs_hp ... ok            T02 点击前方有阻挡的箭头 -> 箭头不消失，生命值减 1。
-test_t03_arrows_on_the_edge_fly_out_safely ... ok       T03 点击边缘且朝向棋盘外的箭头 -> 正常消失，不发生越界错误。
-test_victory_condition ... ok                           清空全部箭头后棋盘进入通关状态。
-test_adjacent_arrows_are_mostly_different_directions ... ok 每关「相邻且同向」的箭头对不能太多。
-test_arrow_colors_are_still_decided_only_by_direction ... ok 打散配色只动关卡布局，不动调色板：一个方向仍然只有一种颜色。
-test_deshuffle_keeps_the_level_solvable_and_no_easier ... ok 打散工具只换方向：换完仍然可解，开局可点数不会变多。
-test_same_color_blocks_stay_small ... ok                同方向的箭头不该连成一大块。
-test_a_worse_replay_keeps_the_old_record ... ok         重玩打得差不会把最高分冲掉（存档只记最好的一次）。
-test_all_levels_can_be_cleared_in_order ... ok          按顺序把 9 关全部打通，验证解锁链路与关卡数据整体可用。
-test_blocked_click_pops_a_broken_heart_not_hanzi ... ok 点错时飘出来的是一颗「碎掉的像素心」，不是「失去一心」四个汉字。
-test_broken_heart_animation_renders_and_fades_out ... ok 心碎动画：两半分开、心往上飘、末端淡出，每一帧都画得出来。
-test_clearing_a_level_unlocks_the_next_one ... ok       通关之后，下一关立刻变成可进入。
-test_clearing_without_mistakes_pays_the_full_score ... ok 零失误通关：拿满分、记进存档，结算面板写出完美奖励。
-test_clicking_a_locked_card_only_shows_a_hint ... ok    点未解锁的卡片不会开局，只提示先通关哪一关。
-test_clicking_an_unlocked_card_starts_that_level ... ok 点已解锁的卡片直接开局。
-test_every_mistake_lowers_the_score ... ok              丢一颗心，HUD 上的得分立刻按比例下降，最终结算也跟着少。
-test_failing_a_level_scores_zero ... ok                 生命值耗尽：本关 0 分，也不写进存档。
-test_finishing_the_tutorial_scores_nothing ... ok       教学关走完：不进存档、不解锁、不算分，只引导去第 1 关。
-test_hud_has_room_for_the_widest_level ... ok           HUD 三组数字排得下：心最多的一关（7 颗）也不会顶到右边或压到得分。
-test_keyboard_shortcuts ... ok                          R 重开本关、Esc 返回主菜单。
-test_level_select_lists_all_levels ... ok               关卡总览里每张卡片对应一个关卡。
-test_locked_level_cannot_be_started ... ok              没通关前一关时，后面的关卡进不去，并且给出提示。
-test_menu_explains_the_rules ... ok                     主菜单必须有玩法说明，以及教学关 / 关卡总览 / 退出三个入口。
-test_mouse_click_routes_to_the_board ... ok             鼠标点击棋盘坐标能正确换算到对应的格子。
-test_primary_button_follows_progress ... ok             主按钮文字会随进度变化：从「开始游戏」到「继续第 N 关」。
-test_render_every_scene_without_error ... ok            各个画面都能正常渲染（顺便覆盖绘制代码）。
-test_reset_progress_needs_two_clicks ... ok             「清空进度」要点两次才真的清，避免手滑。
-test_start_screen_and_start_button ... ok               开始界面存在，点「开始游戏」能进入第 1 关。
-test_t04_clear_level_then_go_to_next_level ... ok       T04 消除本关全部箭头 -> 显示通关并进入下一关。
-test_t04_clearing_the_last_level_shows_all_clear ... ok 打完最后一关显示「全部通关」。
-test_t05_fail_then_restart ... ok                       T05 生命值耗尽 -> 显示失败并允许重新开始。
-test_t06_restart_mid_game ... ok                        T06 游戏进行中重新开始 -> 箭头布局和生命值都恢复。
-test_tutorial_can_be_failed_and_retried_without_penalty ... ok 教学关点光生命值也只是重来一遍：不记分、不锁关。
-test_tutorial_has_its_own_entry_on_the_menu ... ok      教学关是菜单上的独立入口：不用解锁，点了就能进。
-test_tutorial_resyncs_when_player_deviates ... ok       玩家不按提示点时，引导会自动跳过已经失效的步骤，而不是卡住。
+test_a_worse_replay_keeps_the_old_record ... ok   重玩打得差不会把最高分冲掉（存档只记最好的一次）。
+test_adjacent_arrows_are_mostly_different_directions ... ok   每关「相邻且同向」的箭头对不能太多。
+test_all_levels_are_solvable ... ok   作业要求：每个关卡都必须存在合理的通关顺序。
+test_all_levels_can_be_cleared_in_order ... ok   按顺序把 9 关全部打通，验证解锁链路与关卡数据整体可用。
+test_arrow_colors_are_still_decided_only_by_direction ... ok   打散配色只动关卡布局，不动调色板：一个方向仍然只有一种颜色。
+test_background_actually_moves ... ok   背景要真的在动：时间推进之后，整屏像素确实变了。
+test_background_can_still_spawn_a_shooting_star ... ok   流星机制没烂掉：把间隔调短之后，它确实会被触发。
+test_blocked_click_pops_a_broken_heart_not_hanzi ... ok   点错时飘出来的是一颗「碎掉的像素心」，不是「失去一心」四个汉字。
+test_board_exposes_a_live_score ... ok   棋盘自己就知道当前能拿多少分，HUD 直接用这个数（点错立刻掉）。
+test_broken_heart_animation_renders_and_fades_out ... ok   心碎动画：两半分开、心往上飘、末端淡出，每一帧都画得出来。
+test_broken_scores_in_the_save_file_are_ignored ... ok   存档里的分数被人手改坏了（非数字、负数）时，只丢掉坏的那几条。
+test_cleared_count_next_index_and_all_cleared ... ok   统计与「下一关」的取值。
+test_clearing_a_level_unlocks_the_next_one ... ok   通关之后，下一关立刻变成可进入。
+test_clearing_unlocks_the_next_level ... ok   通关一关之后才解锁下一关。
+test_clearing_without_mistakes_pays_the_full_score ... ok   零失误通关：拿满分、记进存档，结算面板写出完美奖励。
+test_click_after_level_finished_is_ignored ... ok   本关结束后再点棋盘不再改变任何状态。
+test_click_empty_cell_is_harmless ... ok   点到空格子不扣生命值，也不改变棋盘。
+test_click_outside_board_is_ignored ... ok   点到棋盘外不会抛异常。
+test_clicking_a_locked_card_only_shows_a_hint ... ok   点未解锁的卡片不会开局，只提示先通关哪一关。
+test_clicking_an_unlocked_card_starts_that_level ... ok   点已解锁的卡片直接开局。
+test_clock_text_formats_minutes_and_hours ... ok   计时文本：MM:SS；超过一小时进位成 H:MM:SS，不会显示成 62:05。
+test_corner_arrow_path_never_leaves_the_board ... ok   路径检测返回的坐标必须全部落在棋盘内。
+test_deadlock_is_detected ... ok   互相阻挡的死锁布局必须被判定为无解。
+test_deshuffle_keeps_the_level_solvable_and_no_easier ... ok   打散工具只换方向：换完仍然可解，开局可点数不会变多。
+test_difficulty_steps_stay_smooth_across_nine_levels ... ok   九个关卡的难度是一级一级加的，任意相邻两关都不能顶出一个大台阶。
+test_direction_colors_are_distinct_and_all_used ... ok   四个方向颜色互不相同，且确实都在关卡里用到。
+test_direction_colors_have_matched_brightness ... ok   四个方向的颜色感知亮度要拉平，整屏看起来才像「一套」。
+test_every_arrow_takes_its_direction_color ... ok   箭头颜色只由方向决定：同一方向的箭头颜色完全一致。
+test_every_level_can_be_played_to_the_end ... ok   按求解器给出的顺序实际点击，每个关卡都能通关。
+test_every_level_has_at_least_one_playable_arrow ... ok   每个关卡开局都必须至少有一支能点的箭头，否则玩家一上手就是死局。
+test_every_mistake_costs_points ... ok   同一关里，失去的心越多得分越低，且是严格下降。
+test_every_mistake_lowers_the_score ... ok   丢一颗心，HUD 上的得分立刻按比例下降，最终结算也跟着少。
+test_every_scene_renders_with_background ... ok   三个场景都要能带着动态背景正常画出来。
+test_fail_when_hp_used_up ... ok   生命值用尽后棋盘进入失败状态。
+test_failing_a_level_scores_zero ... ok   生命值耗尽：本关 0 分，也不写进存档。
+test_failing_the_level_is_worth_nothing ... ok   生命值耗尽时本关 0 分（越界的参数也不会算出一个负数）。
+test_finishing_the_tutorial_scores_nothing ... ok   教学关走完：不进存档、不解锁、不算分，只引导去第 1 关。
+test_full_score_follows_the_difficulty_stars ... ok   满分 = 星级 × 300（基础分 250 + 20% 完美奖励）。
+test_guides_survive_a_restart ... ok   辅助线是玩家偏好：重开本关不该把它关掉。
+test_guides_toggle_keeps_the_button_in_sync ... ok   辅助线开关：状态、按钮上的 on 标记、渲染三者要一致。
+test_heart_icon_is_a_pixel_art_grid ... ok   生命值图标是「像素心」：规整网格、左右对称、顶部中间留凹口。
+test_heart_surface_matches_the_grid ... ok   渲染出来的心和网格一一对应：格子在就是实心，不在就是透明。
+test_hint_picks_an_arrow_that_can_really_fly ... ok   提示高亮的那一支，必须是当下真的能飞出去的箭头、而且是最优的那一支。
+test_hint_ring_fades_away_by_itself ... ok   提示环到时间自己消失，不会一直挂在棋盘上。
+test_hint_when_nothing_can_fly_gives_a_message ... ok   一开局就没有能飞的箭头时，提示按钮不能崩，要给一句话。
+test_hp_drops_one_per_blocked_click ... ok   点错一次固定扣 1 点生命值；扣到 0 就失败，且不会再往下扣成负数。
+test_hp_is_granted_by_difficulty ... ok   每关的生命值必须正好是「星级 → 生命值」表里对应的值。
+test_hud_has_room_for_the_widest_level ... ok   HUD 信息行排得下：最宽的一组内容（7 颗心 + 四位数得分）也不会越界。
+test_hud_hearts_are_pixel_hearts ... ok   HUD 那一排生命值画的也是像素心：还有的用亮色、失去的用暗色。
+test_keyboard_shortcuts ... ok   R 重开本关、Esc 返回主菜单。
+test_later_levels_gain_density_not_board_size ... ok   后半段的难度不靠放大棋盘，而是靠提高密度。
+test_level_colors_are_only_direction_colors ... ok   一关里出现的颜色只可能来自那 4 个方向色，不会有第 5 种。
+test_level_count_and_difficulty_ramp ... ok   标准关正好 9 关，且难度整条曲线是递增的。
+test_level_layout_validation ... ok   布局不合法时应当直接报错，避免出现隐蔽的坏关卡。
+test_level_select_lists_all_levels ... ok   关卡总览里每张卡片对应一个关卡。
+test_level_sizes_are_within_screen ... ok   关卡尺寸不能超过窗口能容纳的范围。
+test_levels_one_to_four_get_harder_step_by_step ... ok   第 1~4 关是入门段，难度必须一关比一关高，而且步子要看得出来。
+test_locked_level_cannot_be_started ... ok   没通关前一关时，后面的关卡进不去，并且给出提示。
+test_lost_heart_is_an_empty_outline ... ok   已经失去的那颗心只剩外沿：内部镂空，和实心的一眼能区分。
+test_mark_cleared_is_idempotent ... ok   重复标记同一关不会出错，也不重复写盘。
+test_menu_explains_the_rules ... ok   主菜单必须有玩法说明，以及教学关 / 关卡总览 / 退出三个入口。
+test_missing_or_broken_save_file_is_tolerated ... ok   存档不存在或内容损坏时，应当当成空进度而不是崩溃。
+test_mouse_click_routes_to_the_board ... ok   鼠标点击棋盘坐标能正确换算到对应的格子。
+test_old_save_without_scores_still_loads ... ok   老存档（version 1，没有 scores 字段）不能因为升级格式丢进度。
+test_one_mistake_hurts_less_on_harder_levels ... ok   点错一次的代价逐关变小——这就是「容错越来越高」的量化说法。
+test_only_first_level_unlocked_at_start ... ok   全新存档只解锁第 1 关。
+test_perfect_bonus_only_when_nothing_is_lost ... ok   零失误奖励只在满心通关时给，而且正好是基础分的 20%。
+test_play_clock_counts_up_and_resets_on_restart ... ok   计时从 0 开始、玩的时候往前走，重新开始要归零。
+test_play_clock_stops_once_the_level_is_over ... ok   本关分出胜负之后时钟就停住，不再往上涨。
+test_play_layout_areas_do_not_overlap ... ok   游戏界面那几块区域不许互相压住：信息栏 / 提示条 / 棋盘 / 工具栏。
+test_primary_button_follows_progress ... ok   主按钮文字会随进度变化：从「开始游戏」到「继续第 N 关」。
+test_render_every_scene_without_error ... ok   各个画面都能正常渲染（顺便覆盖绘制代码）。
+test_reset_clears_everything ... ok   清空进度后回到只解锁第 1 关的状态，最高分也一并清掉，且已经落盘。
+test_reset_progress_needs_two_clicks ... ok   「清空进度」要点两次才真的清，避免手滑。
+test_reset_restores_the_level ... ok   reset() 把箭头布局和生命值都恢复原样。
+test_same_color_blocks_stay_small ... ok   同方向的箭头不该连成一大块。
+test_save_and_reload ... ok   存档写到磁盘后能被重新读回来。
+test_scores_are_recorded_and_only_the_best_one_wins ... ok   每关只留最高分：重玩手感差不会把纪录冲掉。
+test_skipping_a_level_does_not_unlock_further ... ok   跳着通关不算数：第 2 关没过，第 3 关依然锁着。
+test_star_ramp_starts_at_one_and_ends_at_five ... ok   星级从第 1 关的 1 星升到最后一关的 5 星（教学关不在这条链上）。
+test_stars_within_range ... ok   难度星级必须落在 1~5 之间，且不随难度提高而下降。
+test_start_screen_and_start_button ... ok   开始界面存在，点「开始游戏」能进入第 1 关。
+test_t01_click_free_arrow_flies_out ... ok   T01 点击前方无阻挡的箭头 -> 箭头飞出棋盘并消失。
+test_t02_click_blocked_arrow_costs_hp ... ok   T02 点击前方有阻挡的箭头 -> 箭头不消失，生命值减 1。
+test_t03_arrows_on_the_edge_fly_out_safely ... ok   T03 点击边缘且朝向棋盘外的箭头 -> 正常消失，不发生越界错误。
+test_t04_clear_level_then_go_to_next_level ... ok   T04 消除本关全部箭头 -> 显示通关并进入下一关。
+test_t04_clearing_the_last_level_shows_all_clear ... ok   打完最后一关显示「全部通关」。
+test_t05_fail_then_restart ... ok   T05 生命值耗尽 -> 显示失败并允许重新开始。
+test_t06_restart_mid_game ... ok   T06 游戏进行中重新开始 -> 箭头布局和生命值都恢复。
+test_tolerance_grows_from_first_level_to_last ... ok   生命值上限整体不下降，最后一关要明显比第 1 关宽容。
+test_total_full_score_is_the_sum_of_all_levels ... ok   全部关卡的满分加起来等于总分上限（结算面板里的「总分 x / y」用它）。
+test_total_score_is_the_sum_of_each_levels_best ... ok   总分 = 各关最高分之和；不存在关卡里的分数不计入。
+test_tutorial_can_be_failed_and_retried_without_penalty ... ok   教学关点光生命值也只是重来一遍：不记分、不锁关。
+test_tutorial_has_its_own_entry_on_the_menu ... ok   教学关是菜单上的独立入口：不用解锁，点了就能进。
+test_tutorial_is_a_forgiving_sandbox ... ok   教学关是给人放胆点的沙盒，生命值要比同星级的关卡宽裕。
+test_tutorial_is_not_a_numbered_level ... ok   教学关独立于关卡表：不占第 1 关的位置，也不参与编号。
+test_tutorial_is_solvable_and_playable ... ok   教学关自己也要可解、能一路点到通关。
+test_tutorial_level_must_have_steps ... ok   教学关必须带引导步骤，否则界面上会没有任何提示。
+test_tutorial_resyncs_when_player_deviates ... ok   玩家不按提示点时，引导会自动跳过已经失效的步骤，而不是卡住。
 test_tutorial_ring_only_drawn_for_current_step ... ok   引导高亮只在教学关且步骤未走完时出现（顺带覆盖绘制代码）。
-test_tutorial_steps_advance_one_by_one ... ok           照着引导点，步骤会一步步推进，最后引导结束。
-test_hp_is_granted_by_difficulty ... ok                 每关的生命值必须正好是「星级 → 生命值」表里对应的值。
-test_one_mistake_hurts_less_on_harder_levels ... ok     点错一次的代价逐关变小——这就是「容错越来越高」的量化说法。
-test_star_ramp_starts_at_one_and_ends_at_five ... ok    星级从第 1 关的 1 星升到最后一关的 5 星（教学关不在这条链上）。
-test_tolerance_grows_from_first_level_to_last ... ok    生命值上限整体不下降，最后一关要明显比第 1 关宽容。
-test_broken_scores_in_the_save_file_are_ignored ... ok  存档里的分数被人手改坏了（非数字、负数）时，只丢掉坏的那几条。
-test_cleared_count_next_index_and_all_cleared ... ok    统计与「下一关」的取值。
-test_clearing_unlocks_the_next_level ... ok             通关一关之后才解锁下一关。
-test_mark_cleared_is_idempotent ... ok                  重复标记同一关不会出错，也不重复写盘。
-test_missing_or_broken_save_file_is_tolerated ... ok    存档不存在或内容损坏时，应当当成空进度而不是崩溃。
-test_old_save_without_scores_still_loads ... ok         老存档（version 1，没有 scores 字段）不能因为升级格式丢进度。
-test_only_first_level_unlocked_at_start ... ok          全新存档只解锁第 1 关。
-test_reset_clears_everything ... ok                     清空进度后回到只解锁第 1 关的状态，最高分也一并清掉，且已经落盘。
-test_save_and_reload ... ok                             存档写到磁盘后能被重新读回来。
-test_scores_are_recorded_and_only_the_best_one_wins ... ok 每关只留最高分：重玩手感差不会把纪录冲掉。
-test_skipping_a_level_does_not_unlock_further ... ok    跳着通关不算数：第 2 关没过，第 3 关依然锁着。
-test_total_score_is_the_sum_of_each_levels_best ... ok  总分 = 各关最高分之和；不存在关卡里的分数不计入。
-test_board_exposes_a_live_score ... ok                  棋盘自己就知道当前能拿多少分，HUD 直接用这个数（点错立刻掉）。
-test_every_mistake_costs_points ... ok                  同一关里，失去的心越多得分越低，且是严格下降。
-test_failing_the_level_is_worth_nothing ... ok          生命值耗尽时本关 0 分（越界的参数也不会算出一个负数）。
-test_full_score_follows_the_difficulty_stars ... ok     满分 = 星级 × 300（基础分 250 + 20% 完美奖励）。
-test_perfect_bonus_only_when_nothing_is_lost ... ok     零失误奖励只在满心通关时给，而且正好是基础分的 20%。
-test_total_full_score_is_the_sum_of_all_levels ... ok
-test_all_levels_are_solvable ... ok                     作业要求：每个关卡都必须存在合理的通关顺序。
-test_deadlock_is_detected ... ok                        互相阻挡的死锁布局必须被判定为无解。
-test_difficulty_steps_stay_smooth_across_nine_levels ... ok 九个关卡的难度是一级一级加的，任意相邻两关都不能顶出一个大台阶。
-test_every_level_can_be_played_to_the_end ... ok        按求解器给出的顺序实际点击，每个关卡都能通关。
-test_every_level_has_at_least_one_playable_arrow ... ok 每个关卡开局都必须至少有一支能点的箭头，否则玩家一上手就是死局。
-test_later_levels_gain_density_not_board_size ... ok    后半段的难度不靠放大棋盘，而是靠提高密度。
-test_level_count_and_difficulty_ramp ... ok             标准关正好 9 关，且难度整条曲线是递增的。
-test_level_layout_validation ... ok                     布局不合法时应当直接报错，避免出现隐蔽的坏关卡。
-test_level_sizes_are_within_screen ... ok               关卡尺寸不能超过窗口能容纳的范围。
-test_levels_one_to_four_get_harder_step_by_step ... ok  第 1~4 关是入门段，难度必须一关比一关高，而且步子要看得出来。
-test_stars_within_range ... ok                          难度星级必须落在 1~5 之间，且不随难度提高而下降。
-test_tutorial_is_a_forgiving_sandbox ... ok             教学关是给人放胆点的沙盒，生命值要比同星级的关卡宽裕。
-test_tutorial_is_not_a_numbered_level ... ok            教学关独立于关卡表：不占第 1 关的位置，也不参与编号。
-test_tutorial_is_solvable_and_playable ... ok           教学关自己也要可解、能一路点到通关。
-test_tutorial_level_must_have_steps ... ok              教学关必须带引导步骤，否则界面上会没有任何提示。
-test_background_actually_moves ... ok                   背景要真的在动：星点会上飘，时间推进后画面像素确实变了。
-test_background_shows_a_shooting_star_sooner_or_later ... ok 流星按间隔出现，不会一直不出现。
-test_direction_colors_are_distinct_and_all_used ... ok  四个方向颜色互不相同，且确实都在关卡里用到。
-test_direction_colors_have_matched_brightness ... ok    四个方向的颜色感知亮度要拉平，整屏看起来才像「一套」。
-test_every_arrow_takes_its_direction_color ... ok       箭头颜色只由方向决定：同一方向的箭头颜色完全一致。
-test_every_scene_renders_with_background ... ok         三个场景都要能带着动态背景正常画出来。
-test_heart_icon_is_a_pixel_art_grid ... ok              生命值图标是「像素心」：规整网格、左右对称、顶部中间留凹口。
-test_heart_surface_matches_the_grid ... ok              渲染出来的心和网格一一对应：格子在就是实心，不在就是透明。
-test_hud_hearts_are_pixel_hearts ... ok                 HUD 那一排生命值画的也是像素心：还有的用亮色、失去的用暗色。
-test_level_colors_are_only_direction_colors ... ok      一关里出现的颜色只可能来自那 4 个方向色，不会有第 5 种。
-test_lost_heart_is_an_empty_outline ... ok              已经失去的那颗心只剩外沿：内部镂空，和实心的一眼能区分。
-test_wrap_text_keeps_punctuation_off_line_start ... ok  折行后不允许有行以收尾标点开头（中文排版的基本要求）。
-
-----------------------------------------------------------------------
-Ran 94 tests in 1.950s
-
-OK
+test_tutorial_steps_advance_one_by_one ... ok   照着引导点，步骤会一步步推进，最后引导结束。
+test_victory_condition ... ok   清空全部箭头后棋盘进入通关状态。
+test_wrap_text_keeps_punctuation_off_line_start ... ok   折行后不允许有行以收尾标点开头（中文排版的基本要求）。
 ```
 
 ---
