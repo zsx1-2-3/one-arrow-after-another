@@ -3,7 +3,7 @@
 本文件记录《一箭又一箭》的自动化测试结果与关卡可解性校验结果，对应作业要求中的
 「5. 测试要求」与「3.1 至少设计 3 个可以正常通关的关卡」。
 
-* 测试用例总数：**239 个，全部通过**（`Ran 239 tests` → `OK`）
+* 测试用例总数：**240 个，全部通过**（`Ran 240 tests` → `OK`）
 * 关卡校验：**教学关 + 9 个编号关卡全部可解**（`tools/verify_levels.py` 退出码 0）
 * 本文件里的输出全部是真实运行的结果，没有手工润色过的数字
 
@@ -30,12 +30,12 @@ python -m unittest discover -s tests -v
 ## 二、总体结果
 
 ```
-Ran 239 tests in 15.591s
+Ran 240 tests in 15.549s
 
 OK
 ```
 
-239 个用例全部通过，分为十一组：
+240 个用例全部通过，分为十一组：
 
 | 测试类 | 用例数 | 覆盖内容 |
 | --- | --- | --- |
@@ -47,7 +47,7 @@ OK
 | `RenderPrimitiveTestCase` | 25 | 箭头贴图缓存与几何、绳子曲线采样、中文折行、滑杆取值、图标与像素心 |
 | `RopeCurveTestCase` | 6 | 折线拐弯圆滑成绳子曲线、C/S 形判定、蛇形箭生成仍合法可解 |
 | `AnimationTestCase` | 13 | 整条箭头沿路径飞出（时长随路径伸缩）、撞击抖动与泛红、飘字、心碎 |
-| `BackgroundTestCase` | 11 | 三个场景带背景渲染、背景跟随主题、四层动效（光带下沉绕回 / 端头不落进画面 / 亮度分档缓存有上限 / 倾斜只加高度 / 浮尘上浮回绕 / 流星出现又收掉）、游戏界面比菜单收敛、日间改做云影 |
+| `BackgroundTestCase` | 12 | 三个场景带背景渲染、背景跟随主题、四层动效（光带下沉绕回 / 端头不落进画面 / 亮度分档缓存有上限 / 倾斜只加高度 / 浮尘上浮回绕 / 流星出现又收掉）、游戏界面比菜单收敛、日间改做云影、数量写 0 真的关掉 |
 | `GameFlowTestCase` | 82 | 场景切换、关卡总览、解锁链路、教学引导、T04~T06、结算面板、计时 / 提示 / 辅助线 / 缩放平移、开始界面排版与分区、键盘快捷键 |
 | `VisualVarietyTestCase` | 9 | 相邻箭头不同色、配色来自调色板、各关渲染、悬停高亮、渲染不改棋盘 |
 
@@ -393,6 +393,7 @@ test_motes_float_up_and_wrap_around ... ok
 test_play_scene_is_quieter_than_menu ... ok
 test_shooting_star_spawns_then_clears ... ok
 test_tilt_only_adds_height ... ok   倾斜走的是逐列错位：宽度不变，只多出 tan(角度)×宽 的高度。
+test_zero_aurora_count_really_turns_it_off ... ok   `BG_AURORA_COUNT` 写 0 就是关掉这一层。
 test_adjacent_pieces_never_share_a_color ... ok   相邻箭头同色会「糊成一片」，看不出是几支——所有关卡都要守住这条。
 test_assign_colors_gives_every_piece_a_palette_color ... ok
 test_assign_colors_is_deterministic ... ok   同样的布局必须得到同样的配色，否则每次打开画面都不一样。

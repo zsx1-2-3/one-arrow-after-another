@@ -1416,6 +1416,23 @@ class BackgroundTestCase(unittest.TestCase):
             self.assertLessEqual(band["x"] - reach, 0.0, "左端要落在屏外")
             self.assertGreaterEqual(band["x"] + reach, float(bg.width), "右端要落在屏外")
 
+    def test_zero_aurora_count_really_turns_it_off(self):
+        """`BG_AURORA_COUNT` 写 0 就是关掉这一层。
+
+        文档里是这么承诺的，代码就得这么算——早先写成 `max(1, ...)`，
+        写 0 还会硬留一条，和文档正好相反。
+        """
+        original = config.BG_AURORA_COUNT
+        config.BG_AURORA_COUNT = 0
+        try:
+            bg = self.make_background()
+            self.assertEqual(bg.aurora, [])
+            for _ in range(3):
+                bg.update(FRAME)
+            bg.draw(self.screen)
+        finally:
+            config.BG_AURORA_COUNT = original
+
     def test_band_images_are_cached_per_level(self):
         bg = self.make_background()
         band = bg.aurora[0]

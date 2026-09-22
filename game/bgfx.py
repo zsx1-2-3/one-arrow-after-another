@@ -128,7 +128,9 @@ class Background:
         而那几秒恰好就是"双击打开看一眼"和截图脚本拍到的时刻。
         """
         bands = []
-        count = max(1, config.BG_AURORA_COUNT)
+        count = config.BG_AURORA_COUNT
+        if count <= 0:                      # 0 就是关掉这一层，别偷偷留一条
+            return bands
         pad = self.aurora_pad
         slot = (self.height + 2 * pad) / float(count)
         low, high = config.BG_AURORA_SPEED

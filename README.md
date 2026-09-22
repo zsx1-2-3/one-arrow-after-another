@@ -290,7 +290,7 @@ one-arrow-after-another/
 │   ├── make_demo_gif.py      # 无头模式录制演示 GIF
 │   └── sync_test_log.py      # 把 test-report 里的「完整测试日志」块与真实用例同步
 └── tests/
-    └── test_game.py          # 自动化测试（239 个用例）
+    └── test_game.py          # 自动化测试（240 个用例）
 ```
 
 ### 代码设计要点
@@ -438,7 +438,7 @@ def highest_unlocked(self, total):
 
 ## 八、测试结果
 
-`python tests/test_game.py` 共 **239 个用例全部通过**，覆盖作业要求的 T01–T06：
+`python tests/test_game.py` 共 **240 个用例全部通过**，覆盖作业要求的 T01–T06：
 
 | 编号 | 测试内容 | 预期结果 | 实际结果 |
 | --- | --- | --- | --- |
@@ -461,7 +461,7 @@ def highest_unlocked(self, total):
 | `RenderPrimitiveTestCase` | 文字折行与宽度、按钮命中、滑杆取值、绳子曲线采样、像素心图标 |
 | `RopeCurveTestCase` | 折线拐弯圆滑成绳子曲线、C/S 形判定、蛇形箭生成仍合法可解 |
 | `AnimationTestCase` | 整条箭头沿路径飞出（时长随弧长伸缩）、撞击抖动、飘字与心碎的生命周期 |
-| `BackgroundTestCase` | 四层背景动效：光带下沉会绕回、端头不落到画面里、亮度分档缓存不涨、浮尘上浮回绕、流星按计时出现又收掉、游戏界面比菜单收敛、日间改做云影 |
+| `BackgroundTestCase` | 四层背景动效：光带下沉会绕回、端头不落到画面里、亮度分档缓存不涨、浮尘上浮回绕、流星按计时出现又收掉、游戏界面比菜单收敛、日间改做云影、数量写 0 真的关掉 |
 | `GameFlowTestCase` | 完整流程、场景渲染、开始界面排版、总览交互、教学引导、9 关顺序通关、计时 / 提示 / 辅助线 / 缩放平移、界面三块分区不重叠、辅助线几何（`guide_segment` 与被挡路径共线且落在挡路那一格内、箭头飞走后消失） |
 | `VisualVarietyTestCase` | 相邻箭头不同色、日夜间主题两套配色都完整、箭头与箭头造型、背景元素 |
 
