@@ -11,8 +11,9 @@
 
 演示脚本走的是一条「能一次讲清玩法」的路线：
 
-    开始界面 → 第 2 关（只有一支能飞）→ 悬停看红色路径 → 点错掉一颗心
-    → 点对飞出 → 连着点完剩下的 → 通关结算面板
+    开始界面 → 第 2 关（只有一支能飞）→ 悬停看红色路径
+    → 开辅助线、点一次提示 → 点错掉一颗心 → 点对飞出
+    → 连着点完剩下的 → 通关结算面板
 
 注意：脚本用**临时目录里的存档**，不会动你自己那份 progress.json。
 """
@@ -113,6 +114,20 @@ def main():
     # 解的顺序现在就算好：开局之后还要故意点错一次，
     # 但那次点击不会消除箭头，棋盘布局没变，解依然有效。
     solution = game.board.solution()
+
+    # -------- 3.5 打开辅助线 + 用一次提示：这一版新加的两个小工具 --------
+    # 放在这里是因为此刻棋盘还是开局状态，最能看出它们在帮什么忙：
+    # 辅助线把每支箭头的去路画出来，提示再直接指出先点哪一支。
+    game.toggle_guides()
+    game.toast_timer = 0.0              # 气泡会挡住棋盘，演示里不需要它
+    record(game, screen, frames, 0.8)
+
+    game.use_hint()
+    record(game, screen, frames, 1.0)
+
+    game.toggle_guides()
+    game.toast_timer = 0.0
+    record(game, screen, frames, 0.3)
 
     # -------- 4. 点错：撞击抖动 + 飘出一颗碎心，生命值 -1 --------
     game.click_cell(target.row, target.col)

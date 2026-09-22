@@ -7,7 +7,7 @@
 用法：
     python tools/make_screenshots.py
 
-输出：assets/shot-01 ~ shot-11.png
+输出：assets/shot-01 ~ shot-13.png
 
 注意：脚本用**临时目录里的存档**，不会动你自己那份 progress.json。
 """
@@ -184,6 +184,23 @@ def main():
     hover(game, target.row, target.col)
     game.draw()
     save(screen, "shot-11-final-level.png")
+
+    # -------- 12. 提示：高亮一支「点掉它最能解锁局面」的箭头 --------
+    game.start_level(HOVER)
+    unhover(game)
+    game.use_hint()
+    settle(game, 0.3)                       # 等呼吸环胀到中间那一帧
+    game.draw()
+    save(screen, "shot-12-hint.png")
+
+    # -------- 13. 辅助线：给每支箭头画出它前方的去路 --------
+    game.start_level(TOTAL_LEVELS - 1)
+    game.toggle_guides()
+    game.toast_timer = 0.0                  # 气泡会盖住棋盘，截图里不需要它
+    unhover(game)
+    settle(game, 0.2)
+    game.draw()
+    save(screen, "shot-13-guides.png")
 
     pygame.quit()
     if os.path.exists(save_path):
