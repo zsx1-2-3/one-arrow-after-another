@@ -487,6 +487,12 @@ def draw_piece_path(surface, origin, piece, cell, advance):
     直接往 surface 上画两遍（描边 + 本色），不走贴图缓存——贴图是刚体，
     表达不了「弯折在移动」。surface 已被调用方 set_clip 到棋盘视口，
     滑出去的部分会被裁掉。
+
+    抗锯齿：pygame.draw.line / circle 是硬边 API，飞得越快锯齿越晃眼。
+    所以每一帧先在 **2 倍画布**上把这支箭画一遍，再 smoothscale 回 1 倍——
+    相当于给动画开了 2×SSAA，运动边缘顺滑得多。只在飞出动画这一处这么干：
+    静态棋子走贴图缓存（每关渲染一次，开销无所谓），这里每帧都要画，
+    得控制住画布尺寸——先和视口裁剪框求交，箭头飞出视口的部分不画。
     """
     cell = max(4.0, float(cell))
     joints = [(origin[0] + x, origin[1] + y)
@@ -496,11 +502,36 @@ def draw_piece_path(surface, origin, piece, cell, advance):
     head_len = cell * config.PIECE_HEAD_RATIO
     span = cell * config.PIECE_HEAD_SPAN
     grow = 1.0 + config.PIECE_OUTLINE_RATIO
-    _paint_pipe(surface, joints, piece.direction,
+
+    ss = 2                                   # 超采样倍率
+    # 包围盒：折线各点 + 箭头尖伸出的一截，四周留出描边/圆头的余量
+    dx, dy = DIR_VECTORS[piece.direction]
+    tip = (joints[-1][0] + dx * head_len * 0.78,
+           joints[-1][1] + dy * head_len * 0.78)
+    xs = [p[0] for p in joints] + [tip[0]]
+    ys = [p[1] for p in joints] + [tip[1]]
+    pad = stroke * grow * 0.5 + head_len * grow + 2.0
+    bx0, by0 = min(xs) - pad, min(ys) - pad
+    bx1, by1 = max(xs) + pad, max(ys) + pad
+    # 与当前裁剪框求交：飞出视口的部分不必画，画布也不会被拖到很大
+    clip = surface.get_clip()
+    cx0 = max(bx0, clip.left)
+    cy0 = max(by0, clip.top)
+    cx1 = min(bx1, clip.right)
+    cy1 = min(by1, clip.bottom)
+    if cx1 <= cx0 or cy1 <= cy0:
+        return                               # 整支箭已经完全在视口外
+    w = int(math.ceil(cx1 - cx0))
+    h = int(math.ceil(cy1 - cy0))
+
+    canvas = pygame.Surface((w * ss, h * ss), pygame.SRCALPHA)
+    shifted = [((px - cx0) * ss, (py - cy0) * ss) for px, py in joints]
+    _paint_pipe(canvas, shifted, piece.direction,
                 mix_color(color, (0, 0, 0), config.PIECE_OUTLINE_DARKEN),
-                stroke * grow, head_len * grow, span * grow)
-    _paint_pipe(surface, joints, piece.direction, tuple(color),
-                stroke, head_len, span)
+                stroke * grow * ss, head_len * grow * ss, span * grow * ss)
+    _paint_pipe(canvas, shifted, piece.direction, tuple(color),
+                stroke * ss, head_len * ss, span * ss)
+    surface.blit(pygame.transform.smoothscale(canvas, (w, h)), (cx0, cy0))
 
 
 # ------------------------------------------------------------------ 光晕

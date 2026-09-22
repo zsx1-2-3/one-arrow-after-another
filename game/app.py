@@ -1211,11 +1211,13 @@ class Game:
                          scoring.total_max_score(LEVELS)),
                      (self.width // 2, 748), size=14,
                      color=config.COLOR_TEXT_DIM, anchor="center")
+        # 页脚两行的 y 从窗口高度倒推，别写死——窗口从 960 改矮到 880 时，
+        # 写死的 882 正好落到屏幕外，底部那行快捷键提示被裁掉一半。
         ui.draw_text(self.screen, "点击卡片开始挑战；带锁的关卡需要先通关它前面的一关。",
-                     (self.width // 2, 856), size=13,
+                     (self.width // 2, self.height - 26), size=13,
                      color=config.COLOR_TEXT_FAINT, anchor="center")
         ui.draw_text(self.screen, "Esc 返回主菜单　　空格 继续挑战",
-                     (self.width // 2, 882), size=12,
+                     (self.width // 2, self.height - 7), size=12,
                      color=config.COLOR_TEXT_FAINT, anchor="center")
 
     def draw_level_card(self, rect, index):

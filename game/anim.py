@@ -43,8 +43,10 @@ class FlyOut:
 
     @property
     def advance(self):
-        # 用 1.7 次方做缓入，看起来像被"抽"出去一样越来越快
-        return self.travel * (self.progress ** 1.7)
+        # 幂缓动（FLY_EASE_POWER）：起步略黏、越飞越快，像被抽出去。
+        # 幂次从 1.7 降到 1.35——1.7 时前 0.1 秒几乎不动，玩家看到的是
+        # 「卡一下再窜」，不丝滑；1.35 起步立刻有位移、末速也更收敛。
+        return self.travel * (self.progress ** config.FLY_EASE_POWER)
 
     def joints(self):
         """当前帧各折点的棋盘局部坐标（tail -> head），测试盯几何用。"""
