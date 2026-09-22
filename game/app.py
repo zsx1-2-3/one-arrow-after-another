@@ -44,20 +44,38 @@ TOAST_DURATION = 2.0        # 提示气泡停留时间（秒）
 HP_FLASH_DURATION = 0.9     # 刚失去一颗心时，HUD 上那颗心的闪烁时长（秒）
 
 # ---------------------------------------------------------------- 顶部信息栏
-# 关卡标题占一行，右上角留给三个按钮；下面一整行排开
-# 「剩余箭头 / 生命值 / 本关得分」三组数字，横着扫一眼就能读完。
-# 生命值最多 7 颗心（见 levels.HP_BY_STARS），心宽 18 + 间距 7 正好 168 像素，
-# 排在 238~406 之间，不管哪一关都不会挤到右边的得分上去。
-HUD_TITLE_Y = 18
-HUD_ROW_Y = 70              # 三组数字的垂直中心
-HUD_ARROW_LABEL_X = 40
-HUD_ARROW_VALUE_X = 116
-HUD_HP_LABEL_X = 178
-HUD_HEARTS_X = 238
+# 参考图的顶栏是「三段式」骨架：左边一个圆钮、中间竖排信息、右边一组按钮。
+# 这里沿用这个骨架，但信息压缩成两行——因为本作比参考图多要显示两组数字
+# （剩余箭头、本关得分）：
+#
+#   y=32 ┌ [←]             第 4 关 十面埋伏             [▦ 关卡总览] ┐
+#   y=72 │      ⏱ 00:35   ❤❤❤❤❤ 5 / 5   剩余 12   得分 900/900 │
+#
+# 关键的一处改动：第二行不再用一串固定 x 坐标，而是**先算整行总宽、再整体居中**。
+# 旧版把「生命值」「得分」的 x 写死，心数一多（最多 7 颗）就得靠人工核算
+# 会不会撞在一起，改一个字都要重新量。现在居中排布，长短自适应。
+HUD_TITLE_Y = 32            # 标题那一行的垂直中心
+HUD_ROW_Y = 72              # 信息那一行的垂直中心
+HUD_INFO_GAP = 30           # 四组信息之间的间距
+HUD_TITLE_SIZE = 25         # 标题字号
 HUD_HEART_SIZE = 18
 HUD_HEART_GAP = 7
-HUD_SCORE_LABEL_X = 520
-HUD_SCORE_VALUE_X = 594
+HUD_CLOCK_SIZE = 15         # 计时器那个小钟表的直径
+
+# 顶部圆钮 / 右上胶囊按钮的尺寸（圆钮的 rect 传正方形）
+HUD_BUTTON_SIZE = 44
+HUD_BUTTON_X = 24           # 左边圆钮距窗口左边的距离
+HUD_PILL_WIDTH = 138        # 右上「关卡总览」胶囊的宽度
+
+# 底部工具栏
+TOOL_BUTTON_SIZE = 50       # 左右两个圆钮的直径
+TOOL_BUTTON_LABEL_Y_GAP = 6 # 圆钮下方那行小字的间距
+
+# 教学关底部的讲解条。
+# 它不是浮在棋盘之上的：棋盘区域要先把这块地方让出来（见 layout_board），
+# 否则 4×4 的教学关棋盘会一直顶到讲解条的边线上。
+TUTORIAL_BAR_HEIGHT = 56
+TUTORIAL_BAR_MARGIN = 12    # 讲解条与工具栏之间的间距
 
 
 class Game:
@@ -87,7 +105,12 @@ class Game:
         self.overlay_timer = 0.0
         self.mouse_pos = (-1, -1)
         self.hover_cell = None
-        self._light_layer = None        # 棋盘柔光的缓存贴图（面板尺寸变化时重建）
+
+        # 计时 / 提示 / 辅助线：参考图底栏与顶栏上那几个控件的状态
+        self.elapsed = 0.0              # 本关已用时（秒），开局与重开都归零
+        self.hint_cell = None           # 「提示」高亮出来的那一格
+        self.hint_timer = 0.0           # 高亮还能持续多久
+        self.show_guides = False        # 辅助线开关（跨关保留，属于玩家偏好）
 
         # 教学关引导
         self.tutorial_index = 0
@@ -136,6 +159,8 @@ class Game:
         self.overlay_timer = 0.0
         self.hover_cell = None
         self.hover_card = None
+        self.hint_cell = None
+        self.hint_timer = 0.0
         self.reset_armed = False
         self.hp_lost_flash = 0.0
         self.last_score = 0
@@ -194,6 +219,7 @@ class Game:
         self.board = Board(level)
         self.scene = SCENE_PLAY
         self.reset_common()
+        self.elapsed = 0.0
         self.tutorial_index = 0
         self.tutorial_done = not level.tutorial
         self.layout_board()
@@ -227,13 +253,20 @@ class Game:
             self.enter_levels()
 
     def restart_level(self):
-        """把当前关卡恢复到初始状态（重新开始按钮 / R 键）。"""
+        """把当前关卡恢复到初始状态（重新开始按钮 / R 键）。
+
+        计时与提示都要一起归零：本关用时是「从眼前这个布局开始算」的，
+        不归零的话重开之后计时器还挂着上一把的时间，看着像出了 bug。
+        """
         if self.board is None:
             return
         self.board.reset()
         self.overlay = None
         self.overlay_timer = 0.0
         self.hover_cell = None
+        self.hint_cell = None
+        self.hint_timer = 0.0
+        self.elapsed = 0.0
         self.animations.clear()
         self.floats.clear()
         self.tutorial_index = 0
@@ -279,14 +312,26 @@ class Game:
 
     # ================================================================ 布局
     def layout_board(self):
-        """根据关卡尺寸计算单元格边长与棋盘矩形（居中显示）。"""
+        """根据关卡尺寸计算单元格边长与棋盘矩形（居中显示）。
+
+        棋盘区域 = 「提示条下沿」到「工具栏上沿」之间那一块，上下再各留一点余量。
+        四个尺寸常量都在 config 里（HUD_HEIGHT / HINT_BAR_HEIGHT /
+        TOOLBAR_HEIGHT / BOARD_MARGIN_Y），改任何一条这里的排版都会自己跟着重算，
+        不会出现"信息栏加高了两像素、棋盘就压到工具栏上"这种事。
+        """
         rows, cols = self.board.rows, self.board.cols
         gap = config.CELL_GAP
+        top = config.HUD_HEIGHT + config.HINT_BAR_HEIGHT
+        # 底部要让出工具栏；教学关还要再让出讲解条那一块，
+        # 不然棋盘会正好压在讲解条的边线上。
+        bottom = config.TOOLBAR_HEIGHT
+        if self.in_tutorial:
+            bottom += TUTORIAL_BAR_HEIGHT + TUTORIAL_BAR_MARGIN
         area = pygame.Rect(
             config.BOARD_MARGIN_X,
-            config.HUD_HEIGHT + config.BOARD_MARGIN_Y,
+            top + config.BOARD_MARGIN_Y,
             self.width - config.BOARD_MARGIN_X * 2,
-            self.height - config.HUD_HEIGHT - config.FOOTER_HEIGHT - config.BOARD_MARGIN_Y * 2,
+            self.height - top - bottom - config.BOARD_MARGIN_Y * 2,
         )
         size = min(
             (area.width - gap * (cols - 1)) / cols,
@@ -344,9 +389,24 @@ class Game:
         return rects
 
     @property
+    def tutorial_bar_rect(self):
+        """教学关底部讲解条的矩形。
+
+        单独抽出来是因为有两个地方要用它：画讲解条、以及布局棋盘时
+        把这块地方让出来（见 layout_board）。分成两处各写一遍坐标的话，
+        改一处忘一处就会重叠——第一版就是这么被工具栏盖住了半截。
+        """
+        return pygame.Rect(40,
+                           self.height - config.TOOLBAR_HEIGHT
+                           - TUTORIAL_BAR_MARGIN - TUTORIAL_BAR_HEIGHT,
+                           self.width - 80, TUTORIAL_BAR_HEIGHT)
+
+    @property
     def panel_rect(self):
-        # 比原来高一些：结果面板多了「本关得分」这一格和底下那句得分说明
-        panel = pygame.Rect(0, 0, 580, 368)
+        # 宽 660：结果面板现在要摆四格数据（箭头数 / 失去生命值 / 用时 / 得分），
+        # 还是 580 的话四格分下来每格只剩 120 出头，
+        # 「本关得分」那格里的「1250 / 1500」会直接顶到边线上。
+        panel = pygame.Rect(0, 0, 660, 368)
         panel.center = (self.width // 2, self.height // 2)
         return panel
 
@@ -411,12 +471,97 @@ class Game:
         self.buttons = self.make_levels_buttons()
 
     def make_play_buttons(self):
-        # 三个按钮收在顶部右侧，给下面那行「箭头数 / 生命值 / 得分」腾出整条宽度
-        return [
-            ui.Button((604, 10, 104, 40), "关卡总览", self.enter_levels, "ghost", size=13),
-            ui.Button((716, 10, 104, 40), "返回主菜单", self.enter_menu, "ghost", size=13),
-            ui.Button((828, 10, 104, 40), "重新开始", self.restart_level, "primary", size=15),
+        """游戏界面的按钮：顶栏两个 + 底部工具栏三个，合成一个列表返回。
+
+        分成「顶栏 / 工具栏」只是写布局时好读——事件分发仍然只认这一份
+        self.buttons，不必为两组按钮各写一遍点击判断。
+
+        按钮全部换成无描边的圆形 / 胶囊（ui.IconButton）：参考图的按钮就是这样，
+        一排描边框按钮摆在深色底上会显得碎，而画面上的"框"应该留给
+        真正要强调的东西（比如悬停的那一格、教学关的高亮环）。
+        """
+        # --- 顶栏：左边一个返回圆钮，右边一个「关卡总览」胶囊 ---
+        # 按钮贴在上半部分、而不是垂直居中：标题那一行很窄（居中，
+        # 最长也就两百来像素），而下面那行四组数字排开能到 600 宽——
+        # 按钮要是垂直居中，就正好压在信息行的两端上了。
+        y = 8
+        buttons = [
+            ui.IconButton((HUD_BUTTON_X, y, HUD_BUTTON_SIZE, HUD_BUTTON_SIZE),
+                          icon="back", on_click=self.enter_menu),
+            ui.IconButton((self.width - HUD_BUTTON_X - HUD_PILL_WIDTH, y,
+                           HUD_PILL_WIDTH, HUD_BUTTON_SIZE),
+                          icon="grid", label="关卡总览",
+                          on_click=self.enter_levels, shape="pill", size=15),
         ]
+
+        # --- 底部工具栏：左右各一个圆钮（提示 / 辅助线），中间一颗「重新开始」胶囊 ---
+        size = TOOL_BUTTON_SIZE
+        top = self.height - config.TOOLBAR_HEIGHT + 10
+        hint = ui.IconButton((40, top, size, size), icon="bulb",
+                             on_click=self.use_hint, label_below="提示")
+        guide = ui.IconButton((self.width - 40 - size, top, size, size),
+                              icon="guide", on_click=self.toggle_guides,
+                              toggle=True, label_below="辅助线")
+        guide.on = self.show_guides          # 开关的当前状态要跟着画面走
+        restart = ui.IconButton((self.width // 2 - 110, top, 220, size),
+                                label="重新开始", on_click=self.restart_level,
+                                shape="pill", size=17)
+        buttons += [hint, guide, restart]
+        return buttons
+
+    # ------------------------------------------------------------ 提示 / 辅助线
+    def best_hint(self):
+        """在「当前能飞出的箭头」里挑一支最值得点的，返回 (row, col)；没有则 None。
+
+        挑选标准是「消掉它之后能连带解锁多少支其它箭头」，取最多的那支。
+        为什么不随便挑一支能飞的：能飞的箭头里，有的点掉只是少一个箭头，
+        有的点掉会让后面一大串跟着解锁——后者才是对玩家真正有用的提示。
+
+        实现上直接借用棋盘自己的判定：临时把它从格子上摘掉、数一遍
+        还剩几支能飞、再放回去。候选最多几十个、每个候选扫一遍棋盘，
+        点一下按钮跑一次完全够快（毫秒级）。
+        """
+        if self.board is None:
+            return None
+        free = self.board.available_arrows()
+        if not free:
+            return None
+
+        best, best_gain = None, -1
+        for arrow in free:
+            self.board.grid[arrow.row][arrow.col] = None        # 假装把它消掉
+            try:
+                gain = len(self.board.available_arrows())
+            finally:
+                self.board.grid[arrow.row][arrow.col] = arrow   # 无论如何都要还原
+            if gain > best_gain:
+                best, best_gain = arrow, gain
+        return (best.row, best.col)
+
+    def use_hint(self):
+        """「提示」按钮：高亮一支当前能飞出的箭头，几秒后自己消失。"""
+        if self.scene != SCENE_PLAY or self.board is None or self.overlay is not None:
+            return
+        cell = self.best_hint()
+        if cell is None:
+            self.show_toast("当前没有能飞出去的箭头，先重新开始吧", config.COLOR_WARN)
+            return
+        self.hint_cell = cell
+        self.hint_timer = config.HINT_DURATION
+
+    def toggle_guides(self):
+        """「辅助线」开关：给每支箭头画出它前方的射线。
+
+        两个状态用的是**同一个颜色**，它只帮玩家把方向关系看清楚，
+        不替玩家判断能不能点——真要按能否飞出上色，等于把答案画在脸上。
+        """
+        self.show_guides = not self.show_guides
+        self.buttons = self.make_play_buttons()      # 重建才能把开关状态同步到圆钮
+        if self.show_guides:
+            self.show_toast("辅助线已打开：每支箭头前方的虚线就是它的去路",
+                            config.COLOR_TEXT_DIM)
+        else:
+            self.show_toast("辅助线已关闭", config.COLOR_TEXT_DIM)
 
     def make_overlay_buttons(self):
         panel = self.panel_rect
@@ -589,8 +734,18 @@ class Game:
         if self.hp_lost_flash > 0.0:
             self.hp_lost_flash = max(0.0, self.hp_lost_flash - dt / HP_FLASH_DURATION)
 
+        if self.hint_timer > 0.0:
+            self.hint_timer = max(0.0, self.hint_timer - dt)
+            if self.hint_timer == 0.0:
+                self.hint_cell = None            # 高亮结束，连格子一起忘掉
+
         if self.scene == SCENE_PLAY and self.board is not None and self.overlay is None:
-            if self.board.state in (STATE_CLEARED, STATE_FAILED):
+            # 计时只在「真的在玩」的时候往前走：本关已经分出胜负、
+            # 或者正弹着结果面板时，时钟都不该再跳——
+            # 否则玩家盯着结算面板那几秒，用时还在涨，看着像没停下来。
+            if self.board.state == STATE_PLAYING:
+                self.elapsed += dt
+            elif self.board.state in (STATE_CLEARED, STATE_FAILED):
                 # 等飞行动画播完再弹结果面板
                 self.overlay_timer += dt
                 if self.overlay_timer >= config.RESULT_DELAY:
@@ -831,83 +986,162 @@ class Game:
     # ---------------------------------------------------------------- 游戏界面
     def draw_play(self):
         self.draw_hud()
+        self.draw_hint_bar()
         self.draw_board()
         for effect in self.animations:
             effect.draw(self.screen)
         for item in self.floats:
             item.draw(self.screen)
         self.draw_tutorial_bar()
-        self.draw_footer()
+        self.draw_toolbar()
+
+    # ---------------------------------------------------------------- 顶部信息栏
+    def time_text(self):
+        """本关已用时的文本，格式 MM:SS；超过一小时进位成 H:MM:SS。"""
+        total = max(0, int(self.elapsed))
+        if total >= 3600:
+            return "%d:%02d:%02d" % (total // 3600, (total % 3600) // 60, total % 60)
+        return "%02d:%02d" % (total // 60, total % 60)
 
     def draw_hud(self):
+        """顶部信息栏：上面一行标题，下面一行四组信息（整体居中）。"""
         hud = pygame.Rect(0, 0, self.width, config.HUD_HEIGHT)
-        ui.draw_round_rect(self.screen, hud, config.COLOR_HUD, radius=0)
+        pygame.draw.rect(self.screen, config.COLOR_HUD, hud)
         pygame.draw.line(self.screen, config.COLOR_HUD_LINE,
                          (0, config.HUD_HEIGHT - 1), (self.width, config.HUD_HEIGHT - 1))
+        self.draw_hud_title()
+        self.draw_hud_info()
 
-        # 第一行：关卡标题（右上角那三个按钮由 draw() 统一画）
+    def draw_hud_title(self):
+        """标题行：编号关卡写「第 N 关 + 关卡名」，教学关写「教学关」。
+
+        整行按实际字宽居中：「第 1 关」和「第 9 关」的宽度一样，
+        但后面的关卡名长度差很多，写死起点就会左右歪。
+        """
         if self.in_tutorial:
-            # 教学关没有「第 N / M 关」，因为它根本不占编号
-            rect = ui.draw_text(self.screen, "教学关", (40, HUD_TITLE_Y),
-                                size=22, bold=True, color=config.COLOR_TUTORIAL)
-            subtitle = "跟着黄色高亮走一遍，该点哪里都有提示"
+            # 教学关的 Level.name 本身就是「教学关」，再当副标题拼在右边
+            # 会变成「教学关　教学关」，所以这里换成一句说明。
+            title, title_color = "教学关", config.COLOR_TUTORIAL
+            name = "跟着高亮环走一遍就会玩了"
         else:
-            rect = ui.draw_text(self.screen, "第 %d / %d 关" % (self.level_index + 1, TOTAL_LEVELS),
-                                (40, HUD_TITLE_Y), size=22, bold=True)
-            subtitle = self.level.name
-        ui.draw_text(self.screen, subtitle, (rect.right + 14, HUD_TITLE_Y + 3),
-                     size=17, color=config.COLOR_TEXT_DIM)
+            title, title_color = "第 %d 关" % (self.level_index + 1), config.COLOR_TEXT
+            name = self.level.name
 
-        # 第二行：三组数字横着排开——剩余箭头 / 生命值 / 本关得分
-        ui.draw_text(self.screen, "剩余箭头", (HUD_ARROW_LABEL_X, HUD_ROW_Y), size=14,
-                     color=config.COLOR_TEXT_DIM, anchor="midleft")
-        ui.draw_text(self.screen, str(self.board.remaining), (HUD_ARROW_VALUE_X, HUD_ROW_Y),
-                     size=26, color=config.COLOR_ACCENT, bold=True, anchor="midleft")
+        title_w = ui.text_width(title, HUD_TITLE_SIZE, True)
+        name_w = ui.text_width(name, 17)
+        gap = 14
+        x = self.width // 2 - (title_w + gap + name_w) // 2
+        ui.draw_text(self.screen, title, (x, HUD_TITLE_Y), size=HUD_TITLE_SIZE,
+                     color=title_color, bold=True, anchor="midleft")
+        ui.draw_text(self.screen, name, (x + title_w + gap, HUD_TITLE_Y + 1),
+                     size=17, color=config.COLOR_TEXT_DIM, anchor="midleft")
 
-        # 生命值：实心像素心 = 还能错几次，只剩轮廓的 = 已经失去的那几颗
-        ui.draw_text(self.screen, "生命值", (HUD_HP_LABEL_X, HUD_ROW_Y), size=14,
-                     color=config.COLOR_TEXT_DIM, anchor="midleft")
-        hp = self.board.hp_left
+    def draw_hud_info(self):
+        """信息行：计时 / 生命值 / 剩余箭头 / 本关得分，四项横排、整体居中。
+
+        为什么不写死 x 坐标：这一行里心数随关卡变化（4~7 颗）、得分位数也会变
+        （满分最高四位数），固定坐标每动一点内容就要重新人工核算会不会压在一起。
+        这里先量出四项的真实宽度、再整体居中，内容怎么变都不会撞上，
+        也不会出现"加了两个字就顶到右上角按钮底下"这种事。
+        """
+        board = self.board
+        hp = board.hp_left
         heart_size, heart_gap = HUD_HEART_SIZE, HUD_HEART_GAP
-        # 刚失去的那颗心套一圈短暂的红色脉冲——点错时一眼看出是哪颗心没了
-        if self.hp_lost_flash > 0.0 and hp < self.board.max_hp:
-            center = (HUD_HEARTS_X + heart_size / 2.0 + hp * (heart_size + heart_gap),
-                      HUD_ROW_Y)
+        hearts_w = board.max_hp * heart_size + (board.max_hp - 1) * heart_gap
+        hp_w = hearts_w + 10 + ui.text_width("%d / %d" % (hp, board.max_hp), 15)
+        clock_w = HUD_CLOCK_SIZE + 7 + ui.text_width(self.time_text(), 17, True)
+        arrow_label_w = ui.text_width("剩余", 15)
+        arrow_w = arrow_label_w + 8 + ui.text_width(str(board.remaining), 22, True)
+
+        if self.in_tutorial:
+            score_w = ui.text_width("不计分", 15)
+        else:
+            score_w = (ui.text_width("得分", 15) + 8
+                       + ui.text_width(str(board.score), 22, True) + 7
+                       + ui.text_width("/ %d" % scoring.max_score(self.level), 14))
+
+        total = clock_w + hp_w + arrow_w + score_w + HUD_INFO_GAP * 3
+        x = self.width // 2 - total // 2
+
+        # 1) 计时：一个钟表图标 + MM:SS
+        ui.draw_icon_clock(self.screen, (x + HUD_CLOCK_SIZE / 2.0, HUD_ROW_Y),
+                           HUD_CLOCK_SIZE, config.COLOR_TEXT_DIM)
+        ui.draw_text(self.screen, self.time_text(), (x + HUD_CLOCK_SIZE + 7, HUD_ROW_Y),
+                     size=17, color=config.COLOR_TEXT, bold=True, anchor="midleft")
+        x += clock_w + HUD_INFO_GAP
+
+        # 2) 生命值：实心像素心 = 还能错几次，只剩轮廓的 = 已经失去的那几颗。
+        #    刚失去的那颗套一圈短暂的红色脉冲——点错时一眼看出是哪颗心没了。
+        if self.hp_lost_flash > 0.0 and hp < board.max_hp:
+            center = (x + heart_size / 2.0 + hp * (heart_size + heart_gap), HUD_ROW_Y)
             ui.draw_glow(self.screen, center, heart_size + 4, (176, 56, 56),
                          self.hp_lost_flash, falloff=1.7)
-        width = ui.draw_hearts(self.screen, (HUD_HEARTS_X, HUD_ROW_Y), hp,
-                               self.board.max_hp, size=heart_size, gap=heart_gap)
-        ui.draw_text(self.screen, "%d / %d" % (hp, self.board.max_hp),
-                     (HUD_HEARTS_X + width + 10, HUD_ROW_Y), size=15,
+        ui.draw_hearts(self.screen, (x, HUD_ROW_Y), hp, board.max_hp,
+                       size=heart_size, gap=heart_gap)
+        ui.draw_text(self.screen, "%d / %d" % (hp, board.max_hp),
+                     (x + hearts_w + 10, HUD_ROW_Y), size=15,
                      color=config.COLOR_TEXT_DIM, anchor="midleft")
+        x += hp_w + HUD_INFO_GAP
 
-        # 本关得分：点错会立刻往下掉，所以刚丢心时把数字染红提示一下。
-        # 教学关不参与计分，这一栏就换成说明文字，免得玩家以为没得分是出错了。
+        # 3) 剩余箭头
+        ui.draw_text(self.screen, "剩余", (x, HUD_ROW_Y), size=15,
+                     color=config.COLOR_TEXT_DIM, anchor="midleft")
+        ui.draw_text(self.screen, str(board.remaining), (x + arrow_label_w + 8, HUD_ROW_Y),
+                     size=22, color=config.COLOR_ACCENT, bold=True, anchor="midleft")
+        x += arrow_w + HUD_INFO_GAP
+
+        # 4) 本关得分：点错会立刻往下掉，所以刚丢心时把数字染红提示一下。
+        #    教学关不参与计分，这一栏换成说明文字，免得玩家以为没得分是出错了。
         if self.in_tutorial:
-            ui.draw_text(self.screen, "本关得分", (HUD_SCORE_LABEL_X, HUD_ROW_Y), size=14,
-                         color=config.COLOR_TEXT_DIM, anchor="midleft")
-            ui.draw_text(self.screen, "不计分", (HUD_SCORE_VALUE_X, HUD_ROW_Y), size=24,
-                         color=config.COLOR_TEXT_FAINT, bold=True, anchor="midleft")
+            ui.draw_text(self.screen, "不计分", (x, HUD_ROW_Y), size=15,
+                         color=config.COLOR_TEXT_FAINT, anchor="midleft")
         else:
-            ui.draw_text(self.screen, "本关得分", (HUD_SCORE_LABEL_X, HUD_ROW_Y), size=14,
+            ui.draw_text(self.screen, "得分", (x, HUD_ROW_Y), size=15,
                          color=config.COLOR_TEXT_DIM, anchor="midleft")
             score_color = (config.COLOR_DANGER if self.hp_lost_flash > 0.0
                            else config.COLOR_SCORE)
-            rect = ui.draw_text(self.screen, str(self.board.score),
-                                (HUD_SCORE_VALUE_X, HUD_ROW_Y),
-                                size=26, color=score_color, bold=True, anchor="midleft")
+            rect = ui.draw_text(self.screen, str(board.score),
+                                (x + ui.text_width("得分", 15) + 8, HUD_ROW_Y),
+                                size=22, color=score_color, bold=True, anchor="midleft")
             ui.draw_text(self.screen, "/ %d" % scoring.max_score(self.level),
-                         (rect.right + 8, HUD_ROW_Y + 4), size=14,
+                         (rect.right + 7, HUD_ROW_Y + 3), size=14,
                          color=config.COLOR_TEXT_FAINT, anchor="midleft")
 
+    def draw_hint_bar(self):
+        """信息栏下面那行关卡提示：一句话点出这一关的难点在哪。
+
+        放在信息栏与棋盘之间的窄条里，居中一行小字。
+        教学关时换成引导说明——那时玩家的注意力应该在棋盘上的高亮环，
+        不该再读一句关卡难度提示。
+        """
+        hint = self.level.hint
+        if self.current_step is not None:
+            hint = "跟着高亮环点就行，这一关不计分，随时可以再来一遍"
+        ui.draw_text(self.screen, hint, (self.width // 2, config.HUD_HEIGHT + 13),
+                     size=15, color=config.COLOR_TEXT_FAINT, anchor="center")
+        # 快捷键说明放这一行的右端：底部工具栏的左右两角已经被"提示 / 辅助线"
+        # 两个按钮的小字占了，塞在那里会和它们挤在一起。
+        ui.draw_text(self.screen, "R 重开本关 · Esc 返回主菜单",
+                     (self.width - 30, config.HUD_HEIGHT + 13), size=13,
+                     color=config.COLOR_TEXT_FAINT, anchor="midright")
+
     def draw_board(self):
+        """画棋盘。
+
+        这一版**不画卡片底衬，也不画每一格的底格**（对齐参考图）：
+        棋盘就是深色底上一片极淡的点阵，箭头是画面上最亮的东西。
+
+        为什么去掉底格：这个游戏的难度来自「在一堆箭头里找出能点的那支」，
+        而几十个空格子的方框会让视线一直被拽住，那是"乱"不是"难"。
+        把底格换成点阵之后，棋盘范围照样看得出来，箭头却跳出来了。
+        """
         rows, cols = self.board.rows, self.board.cols
 
-        # 棋盘底衬：整块圆角面板 + 面板内缓慢游动的柔光。
-        # 原来只有一圈外框，棋盘区域是一片死板的深色，关卡里看着很单调。
-        panel = self.board_rect.inflate(28, 28)
-        ui.draw_round_rect(self.screen, panel, config.COLOR_BOARD_PANEL, radius=20)
-        self.draw_board_light(panel)
+        # 点阵的颜色：底色是很淡的白，直接和底色混合成一个实色再画，
+        # 比每格新建一层带 alpha 的 Surface 便宜得多。
+        dot_color = ui.mix_color(config.COLOR_BG_TOP, config.COLOR_DOT,
+                                  config.COLOR_DOT_ALPHA / 255.0)
+        dot_radius = max(2, int(round(self.cell_size * 0.055)))
 
         # 悬停时高亮该箭头的前进路径：绿色=畅通，红色=被挡
         path_cells = set()
@@ -934,21 +1168,43 @@ class Game:
         pulse = self.tutorial_pulse()
         hover_pulse = 0.5 + 0.5 * math.sin(self.time * 5.2)
 
+        # 辅助线画在所有箭头**下面**：它是背景信息，不该压住箭头本身
+        if self.show_guides:
+            self.draw_guides()
+
         for row in range(rows):
             for col in range(cols):
                 rect = self.cell_rect(row, col)
                 arrow = self.board.arrow_at(row, col)
-                base = config.COLOR_CELL_USED if arrow is not None else config.COLOR_CELL
+                hovered = self.hover_cell == (row, col)
 
-                ui.draw_round_rect(self.screen, rect, base, radius=config.CELL_RADIUS)
+                # 1) 空格子：只有一个小暗点。有箭头的位置不需要点，
+                #    否则会在箭头边上露出半个点，看着像脏东西。
+                if arrow is None:
+                    pygame.draw.circle(self.screen, dot_color, rect.center, dot_radius)
+
+                # 2) 悬停路径的底色。
+                #    方块要往里缩一圈：棋盘没有底格之后，整格染色会变成
+                #    一块块生硬的色斑（看着像沾了污渍），缩一圈之后就只是
+                #    "沿路径点的几个记号"，方向感还在，画面却干净多了。
                 if (row, col) in path_cells:
-                    ui.draw_round_rect_alpha(self.screen, rect, path_color, 48,
+                    inset = config.COLOR_PATH_INSET
+                    ui.draw_round_rect_alpha(
+                        self.screen, rect.inflate(-inset * 2, -inset * 2),
+                        path_color, config.COLOR_PATH_ALPHA,
+                        radius=max(4, config.CELL_RADIUS - 4))
+
+                # 3) 鼠标停在哪一格：一层很淡的白底，示意"这里可以点"
+                if hovered:
+                    ui.draw_round_rect_alpha(self.screen, rect, config.COLOR_CELL_HOVER,
+                                             config.COLOR_CELL_HOVER_ALPHA,
                                              radius=config.CELL_RADIUS)
-                # 教学关目标格子：用加法柔光提亮，而不是叠一层黄色底。
-                # 叠底色会把下面那支箭头染成一片发闷的橄榄色（试过，很难看），
-                # 加法光只是"打亮"这一格，箭头的颜色还是它自己的。
-                # 光晕裁到格子范围内，否则会溢到相邻格子上、
-                # 而且行优先绘制会让相邻格把它盖掉一半，出现半明半暗的怪相。
+
+                # 4) 教学关目标格子：用加法柔光提亮，而不是叠一层黄色底。
+                #    叠底色会把下面那支箭头染成一片发闷的橄榄色（试过，很难看），
+                #    加法光只是"打亮"这一格，箭头的颜色还是它自己的。
+                #    光晕裁到格子范围内，否则会溢到相邻格子上、
+                #    而且行优先绘制会让相邻格把它盖掉一半，出现半明半暗的怪相。
                 if step is not None and (row, col) == (step.row, step.col):
                     clip_backup = self.screen.get_clip()
                     self.screen.set_clip(rect)
@@ -956,20 +1212,10 @@ class Game:
                                  (168, 122, 34), 0.30 + 0.34 * pulse, falloff=2.0)
                     self.screen.set_clip(clip_backup)
 
-                edge = config.COLOR_CELL_EDGE
-                if step is not None and (row, col) == (step.row, step.col):
-                    edge = config.COLOR_TUTORIAL
-                elif (row, col) == blocker_cell:
-                    edge = config.COLOR_DANGER
-                elif arrow is not None and self.hover_cell == (row, col):
-                    # 悬停格的边框跟着呼吸，鼠标停哪儿一眼就能看到
-                    edge = ui.mix_color(config.COLOR_CELL_EDGE, config.COLOR_HOVER_RING,
-                                        0.55 + 0.45 * hover_pulse)
-                pygame.draw.rect(self.screen, edge, rect, 2, border_radius=config.CELL_RADIUS)
-
+                # 5) 箭头本身
                 if arrow is not None:
                     side = rect.width * config.ARROW_RATIO
-                    if self.hover_cell == (row, col):
+                    if hovered:
                         side *= 1.0 + 0.06 * hover_pulse     # 悬停时轻轻放大一点
                     ui.draw_arrow(self.screen, rect.center, side, arrow.direction)
 
@@ -977,54 +1223,89 @@ class Game:
         if len(path_centers) > 1:
             self.draw_path_flow(path_centers, path_color)
 
-        # 棋盘外框
-        pygame.draw.rect(self.screen, config.COLOR_BOARD_PANEL_EDGE,
-                         panel, 2, border_radius=20)
-
-        # 教学关：给当前该点的箭头套一圈会呼吸的高亮环（画在最上层）
+        # 各种"环"统一放在最后画：行优先绘制下，先画的环会被后面几格的箭头
+        # 压掉边角，看上去像缺了一块。
+        if blocker_cell is not None:
+            self.draw_cell_ring(self.cell_rect(*blocker_cell), config.COLOR_DANGER, 1.0)
+        if self.hover_cell is not None and self.board.arrow_at(*self.hover_cell) is not None:
+            ring_color = ui.mix_color(config.COLOR_TEXT_FAINT, config.COLOR_HOVER_RING,
+                                      0.55 + 0.45 * hover_pulse)
+            self.draw_cell_ring(self.cell_rect(*self.hover_cell), ring_color, 1.0)
         if step is not None:
             self.draw_tutorial_ring(self.cell_rect(step.row, step.col), pulse)
+        if self.hint_cell is not None:
+            self.draw_hint_ring(self.cell_rect(*self.hint_cell))
 
-    # ---------------------------------------------------------------- 棋盘动效
-    def board_light_layer(self, panel):
-        """把「棋盘柔光」烘在一张比面板更大的画布上并缓存。
+    # ---------------------------------------------------------------- 辅助线 / 提示环
+    def draw_guides(self):
+        """辅助线：给每支箭头画一条朝它前进方向延伸的虚线。
 
-        画布做得比面板大一圈（四周各留 drift），这样光晕在面板内漂移时
-        画布不会露边；真正绘制时用 set_clip 裁到面板范围，光不会溢出到棋盘外。
+        终点分两种情况：前方没有箭头就画到棋盘边界（说明"这一支能出去"），
+        前方有箭头就停在它前面的格线（说明"被这一支挡住"）。
+
+        两种情况**用同一个颜色**是刻意的：这条线的用途是帮玩家看清方向关系，
+        不是替玩家判断。真要按"能不能飞"分别上绿/上红，等于把答案画在脸上，
+        剩下的操作就只剩按图索骥了。
         """
-        drift = self.board_light_drift(panel)
-        size = (panel.width + drift * 2, panel.height + drift * 2)
-        cached = self._light_layer
-        if cached is not None and cached[0] == size:
-            return cached[1]
+        color = ui.mix_color(config.COLOR_BG_TOP, config.COLOR_GUIDE,
+                             config.COLOR_GUIDE_ALPHA / 255.0)
+        deltas = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
 
-        layer = pygame.Surface(size, pygame.SRCALPHA)
-        ui.draw_glow(layer, (size[0] // 2, size[1] // 2),
-                     int(min(panel.width, panel.height) * 0.52),
-                     (36, 56, 104), 1.0, falloff=2.3)
-        self._light_layer = (size, layer)
-        return layer
+        for arrow in self.board.arrows:
+            if self.board.arrow_at(arrow.row, arrow.col) is not arrow:
+                continue                                   # 已经飞走了
+            rect = self.cell_rect(arrow.row, arrow.col)
+            dx, dy = deltas[arrow.direction]
+            start = (rect.centerx + dx * rect.width * 0.34,
+                     rect.centery + dy * rect.height * 0.34)
 
-    def board_light_drift(self, panel):
-        """柔光在面板内可以漂移的最大距离。"""
-        return int(min(panel.width, panel.height) * 0.13)
+            blocker = self.board.find_blocker(arrow.row, arrow.col)
+            if blocker is not None:
+                # 停在挡路那一支的跟前（半个格子）
+                target = self.cell_rect(blocker.row, blocker.col).center
+                end = (target[0] - dx * self.cell_size / 2.0,
+                       target[1] - dy * self.cell_size / 2.0)
+            else:
+                end = {
+                    "up": (start[0], self.board_rect.top),
+                    "down": (start[0], self.board_rect.bottom),
+                    "left": (self.board_rect.left, start[1]),
+                    "right": (self.board_rect.right, start[1]),
+                }[arrow.direction]
 
-    def draw_board_light(self, panel):
-        """棋盘面板里缓慢游动的一团柔光。
+            ui.draw_dashed_line(self.screen, color, start, end,
+                                dash=max(5, int(self.cell_size * 0.14)),
+                                gap=max(4, int(self.cell_size * 0.11)), width=2)
 
-        纯粹的观感件：让"棋盘是活的"，又几乎不干扰判读——
-        亮度压得很低，位置用两条不同周期的正弦合成，看不出规律。
+    def draw_cell_ring(self, rect, color, alpha_ratio, width=3, grow=0):
+        """给一格套一个圆角描边环。"""
+        ring = rect.inflate(grow * 2, grow * 2)
+        ui.draw_round_rect_alpha(self.screen, ring, color, int(255 * alpha_ratio),
+                                 radius=config.CELL_RADIUS + grow, width=width)
+
+    def draw_hint_ring(self, rect):
+        """「提示」高亮的那一格：一圈会呼吸的青绿环 + 一团加法光。
+
+        用青绿而不是教学关的黄色：教学关的黄环意思是"就该点这里"，
+        提示只是"可以考虑这一支"，两者会出现在同一套界面上，颜色得分得开。
+
+        hint_timer 用完之后环自己就没了，不需要玩家手动关——
+        高亮一直挂着会让人以为那一格有什么特殊状态。
         """
-        layer = self.board_light_layer(panel)
-        drift = self.board_light_drift(panel)
-        t = self.time * 0.20
-        offset_x = math.sin(t * 1.0) * drift
-        offset_y = math.sin(t * 0.68 + 1.7) * drift
-        position = (panel.x + drift - offset_x, panel.y + drift - offset_y)
+        fade = min(1.0, max(0.0, self.hint_timer) / 0.6)   # 最后 0.6 秒淡出
+        if fade <= 0.0:
+            return
+        pulse = 0.5 + 0.5 * math.sin(self.time * 6.0)
+        grow = int(4 + pulse * 5)
+        ring = rect.inflate(grow * 2, grow * 2)
+        ui.draw_round_rect_alpha(self.screen, ring, config.COLOR_HINT,
+                                 int((110 + pulse * 120) * fade),
+                                 radius=config.CELL_RADIUS + grow, width=3)
 
         clip_backup = self.screen.get_clip()
-        self.screen.set_clip(panel)
-        self.screen.blit(layer, position, special_flags=pygame.BLEND_RGB_ADD)
+        self.screen.set_clip(rect)
+        ui.draw_glow(self.screen, rect.center, int(rect.width * 0.75),
+                     (34, 126, 104), 0.45 * fade, falloff=2.0)
         self.screen.set_clip(clip_backup)
 
     def draw_path_flow(self, centers, color):
@@ -1068,7 +1349,7 @@ class Game:
         step = self.current_step
         if step is None:
             return
-        bar = pygame.Rect(40, self.height - 112, self.width - 80, 56)
+        bar = self.tutorial_bar_rect
         ui.draw_round_rect(self.screen, bar, config.COLOR_TUTORIAL_BAR, radius=14)
         ui.draw_round_rect(self.screen, bar, config.COLOR_TUTORIAL_BAR_EDGE,
                            radius=14, width=2)
@@ -1083,16 +1364,19 @@ class Game:
         ui.draw_paragraph(self.screen, step.text, text_area, size=15,
                           color=config.COLOR_TEXT, line_gap=2)
 
-    def draw_footer(self):
-        hint = self.level.hint
-        if self.current_step is not None:
-            hint = "跟着黄色高亮环点就行（教学关不计分，随时可以再来一遍）"
-        ui.draw_text(self.screen, "提示：" + hint,
-                     (self.width // 2, self.height - 28), size=16,
-                     color=config.COLOR_TEXT_FAINT, anchor="center")
-        ui.draw_text(self.screen, "R 重开本关    Esc 返回主菜单",
-                     (self.width - 32, self.height - 28), size=14,
-                     color=config.COLOR_TEXT_FAINT, anchor="midright")
+    def draw_toolbar(self):
+        """底部工具栏：一条比底色略亮的分隔条，按钮由 draw() 统一绘制。
+
+        这里只画底衬和上沿分隔线——「提示 / 重新开始 / 辅助线」三个按钮都在
+        self.buttons 里，和其它按钮共用一份绘制代码。
+        否则"工具栏上的按钮"和"别处的按钮"会各有一套悬停、开关逻辑，
+        改一处忘一处，两边迟早长得不一样。
+        """
+        bar = pygame.Rect(0, self.height - config.TOOLBAR_HEIGHT,
+                          self.width, config.TOOLBAR_HEIGHT)
+        pygame.draw.rect(self.screen, config.COLOR_TOOLBAR, bar)
+        pygame.draw.line(self.screen, config.COLOR_TOOLBAR_LINE,
+                         (0, bar.y), (self.width, bar.y))
 
     # ---------------------------------------------------------------- 结果面板
     def draw_overlay(self):
@@ -1126,18 +1410,22 @@ class Game:
                      size=17, color=config.COLOR_TEXT_DIM, anchor="center")
 
         if self.in_tutorial:
-            # 教学关没有得分这一格——它不进任何纪录
+            # 教学关没有得分这一格——它不进任何纪录；用时还是值得给玩家看一眼的
             stats = [
                 ("本关箭头", str(self.board.total), False),
                 ("失去生命值", "%d 颗" % self.board.hearts_lost, False),
+                ("本关用时", self.time_text(), False),
             ]
         else:
             stats = [
                 ("本关箭头", str(self.board.total), False),
                 ("失去生命值", "%d 颗" % self.board.hearts_lost, False),
+                ("本关用时", self.time_text(), False),
                 ("本关得分", "%d / %d" % (self.last_score, self.score_max), True),
             ]
-        box_w, box_h, gap = 160, 68, 14
+        # 每格 140 宽：四格 + 三个间距正好 596，比面板窄一大截，
+        # 不会像 160 那样把两边的内边距吃光。
+        box_w, box_h, gap = 140, 68, 12
         total = len(stats) * box_w + (len(stats) - 1) * gap
         left = panel.centerx - total // 2
         for index, (label, value, highlight) in enumerate(stats):

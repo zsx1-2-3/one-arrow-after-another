@@ -296,27 +296,43 @@ def make_vertical_gradient(size, top_color, bottom_color):
 
 # ------------------------------------------------------------------ 箭头
 def _arrow_shape(surface, center, side, color):
-    """在 surface 上画一个「朝右」的箭头图形。"""
+    """在 surface 上画一个「朝右」的胖箭头图形。
+
+    造型照着实机参考图来：一根很粗的**圆头箭杆** + 一个张得很开的三角箭头，
+    整体几乎填满格子。
+
+    为什么要把杆加粗（旧版是 0.24，现在是 0.36）：深色底上细杆细头的箭头
+    看着"轻飘飘"的，一堆箭头铺在一起像一堆钉子；加粗之后才有参考图里那种
+    糖果色的分量感。三个比例都放在 config 里
+    （ARROW_SHAFT_RATIO / ARROW_HEAD_RATIO / ARROW_HEAD_SPAN），
+    以后想调胖瘦改配置就行，不用动这里的绘制代码。
+    """
     cx, cy = center
     half = side / 2.0
-    joint = cx + half * 0.08                      # 箭杆与箭头的交界 x 坐标
-    shaft_left = cx - half
-    shaft_height = side * 0.24
+    shaft_h = side * config.ARROW_SHAFT_RATIO
+    joint = cx + half - side * config.ARROW_HEAD_RATIO   # 箭杆与三角的交界
+    span = side * config.ARROW_HEAD_SPAN                 # 三角上下张开量
 
+    # 箭杆：两端都是圆的，看起来像一截短管道。
+    # 右端刻意画到交界之后一点，让三角把它盖住——
+    # 否则杆的圆头会在三角里露出一道弧线，像接口没焊好。
+    left = cx - half
+    right = joint + shaft_h * 0.42
     pygame.draw.rect(
         surface,
         color,
-        pygame.Rect(int(shaft_left), int(cy - shaft_height / 2),
-                    int(joint - shaft_left), int(shaft_height)),
-        border_radius=max(1, int(side * 0.11)),
+        pygame.Rect(int(round(left)), int(round(cy - shaft_h / 2)),
+                    max(1, int(round(right - left))), max(1, int(round(shaft_h)))),
+        border_radius=max(1, int(round(shaft_h * 0.44))),
     )
+    # 三角箭头
     pygame.draw.polygon(
         surface,
         color,
         [
-            (int(cx + half), int(cy)),
-            (int(joint), int(cy - side * 0.30)),
-            (int(joint), int(cy + side * 0.30)),
+            (int(round(cx + half)), int(round(cy))),
+            (int(round(joint)), int(round(cy - span))),
+            (int(round(joint)), int(round(cy + span))),
         ],
     )
 
@@ -325,11 +341,17 @@ def _build_arrow(side, color, direction):
     """生成某种颜色/方向的箭头贴图。
 
     做法：先用白色画一个「朝右」的箭头当遮罩，旋转到目标方向，
-    再乘上一层竖直渐变（上亮下暗），得到有光泽的立体箭头。
-    渐变在**旋转之后**再乘，这样四个方向的受光方向一致（都从上方来），
-    不会出现「朝上的箭头变成左边亮」这种别扭的光照。
+    再乘上一层很轻的竖直渐变（上亮下暗）。
+
+    两个刻意的选择：
+
+    * 渐变在**旋转之后**再乘，这样四个方向的受光方向一致（都从上方来），
+      不会出现「朝上的箭头变成左边亮」这种别扭的光照；
+    * 这一版**不加投影**。参考图里的箭头是纯平的，投影在深底上会糊出一圈
+      脏边，反而让箭头看起来发灰；想要"浮起来"的感觉，
+      靠的是箭头自己够亮、底够深，而不是加阴影。
     """
-    pad = max(3, int(side * 0.14))
+    pad = max(3, int(side * 0.10))
     size = int(side) + pad * 2
 
     # 1) 白色箭头遮罩
@@ -342,7 +364,7 @@ def _build_arrow(side, color, direction):
     if angle:
         shape = pygame.transform.rotate(shape, angle)
 
-    # 3) 乘上竖直渐变：顶部提亮、底部压暗
+    # 3) 乘上竖直渐变：顶部提亮、底部压暗（幅度很小，见 config）
     top = mix_color(color, (255, 255, 255), config.ARROW_HIGHLIGHT)
     bottom = mix_color(color, (0, 0, 0), config.ARROW_SHADE)
     gradient = pygame.Surface((size, size), pygame.SRCALPHA)
@@ -353,16 +375,7 @@ def _build_arrow(side, color, direction):
 
     arrow = shape.copy()
     arrow.blit(gradient, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-
-    # 4) 深色投影垫在下面，让箭头从格子上"浮"起来
-    shadow = shape.copy()
-    shadow.fill(tuple(max(0, int(value * 0.42)) for value in color) + (255,),
-                special_flags=pygame.BLEND_RGBA_MULT)
-
-    surface = pygame.Surface((size, size), pygame.SRCALPHA)
-    surface.blit(shadow, (2, 3))
-    surface.blit(arrow, (0, 0))
-    return surface
+    return arrow
 
 
 def arrow_color(direction):
@@ -471,6 +484,110 @@ def draw_glow(surface, center, radius, color, intensity=1.0, falloff=2.0, levels
                  special_flags=pygame.BLEND_RGB_ADD)
 
 
+# ------------------------------------------------------------------ 图标
+# 顶栏与工具栏上的小按钮里画的是图形、不是汉字——参考图的按钮就是这样，
+# 一个圆钮配一个符号，比塞两个字清爽，也不受字号影响。
+# 全部用基本图元现画，不引入图片资源：换配色只要换一个颜色参数，
+# 不用重新导出素材，也就不用担心贴图颜色和主题对不上。
+
+
+def draw_icon_back(surface, center, size, color):
+    """返回「←」：一条横线 + 一个三角。"""
+    cx, cy = center
+    half = size / 2.0
+    thickness = max(2, int(round(size * 0.15)))
+    pygame.draw.line(surface, color, (cx - half, cy), (cx + half * 0.35, cy), thickness)
+    pygame.draw.polygon(surface, color, [
+        (int(round(cx - half)), int(round(cy))),
+        (int(round(cx - half + size * 0.46)), int(round(cy - size * 0.36))),
+        (int(round(cx - half + size * 0.46)), int(round(cy + size * 0.36))),
+    ])
+
+
+def draw_icon_grid(surface, center, size, color):
+    """关卡总览「▦」：四宫格。"""
+    cx, cy = center
+    cell = size * 0.36
+    gap = size * 0.16
+    radius = max(1, int(round(size * 0.10)))
+    for index in range(4):
+        row, col = divmod(index, 2)
+        x = cx - (cell + gap) / 2.0 + col * (cell + gap)
+        y = cy - (cell + gap) / 2.0 + row * (cell + gap)
+        pygame.draw.rect(surface, color,
+                         pygame.Rect(int(round(x)), int(round(y)),
+                                     max(1, int(round(cell))), max(1, int(round(cell)))),
+                         border_radius=radius)
+
+
+def draw_icon_bulb(surface, center, size, color):
+    """提示「灯泡」：一个圆灯泡 + 下面两横表示灯座。"""
+    cx, cy = center
+    radius = size * 0.31
+    pygame.draw.circle(surface, color,
+                       (int(round(cx)), int(round(cy - size * 0.12))), int(round(radius)))
+    thickness = max(2, int(round(size * 0.10)))
+    base_w = size * 0.34
+    for index in range(2):
+        y = cy + size * 0.20 + index * max(2.0, size * 0.15)
+        pygame.draw.line(surface, color, (cx - base_w / 2.0, y), (cx + base_w / 2.0, y),
+                         thickness)
+
+
+def draw_icon_guide(surface, center, size, color):
+    """辅助线：三条横线、中间那条断开——一眼能认出是「对齐辅助」的意思。"""
+    cx, cy = center
+    half = size * 0.42
+    thickness = max(2, int(round(size * 0.11)))
+    for index, ratio in enumerate((-0.44, 0.0, 0.44)):
+        y = cy + size * ratio
+        if index == 1:
+            pygame.draw.line(surface, color, (cx - half, y), (cx - half * 0.16, y), thickness)
+            pygame.draw.line(surface, color, (cx + half * 0.16, y), (cx + half, y), thickness)
+        else:
+            pygame.draw.line(surface, color, (cx - half, y), (cx + half, y), thickness)
+
+
+def draw_icon_clock(surface, center, size, color):
+    """计时器：一个圆圈 + 两根指针（竖长横短，像钟表上的 12 点 15 分）。"""
+    cx, cy = center
+    radius = size * 0.42
+    thickness = max(2, int(round(size * 0.09)))
+    pygame.draw.circle(surface, color, (int(round(cx)), int(round(cy))),
+                       int(round(radius)), thickness)
+    pygame.draw.line(surface, color, (cx, cy), (cx, cy - radius * 0.56), thickness)
+    pygame.draw.line(surface, color, (cx, cy), (cx + radius * 0.40, cy), thickness)
+
+
+ICONS = {
+    "back": draw_icon_back,
+    "grid": draw_icon_grid,
+    "bulb": draw_icon_bulb,
+    "guide": draw_icon_guide,
+    "clock": draw_icon_clock,
+}
+
+
+def draw_dashed_line(surface, color, start, end, dash=8, gap=6, width=2):
+    """画一条虚线（辅助线用）。
+
+    实线会把整块棋盘切得七零八落，虚线只是"标出方向"，不抢箭头。
+    """
+    x1, y1 = start
+    x2, y2 = end
+    total = math.hypot(x2 - x1, y2 - y1)
+    if total <= 0.5:
+        return
+    ux, uy = (x2 - x1) / total, (y2 - y1) / total
+    position = 0.0
+    while position < total:
+        head = min(position + dash, total)
+        pygame.draw.line(surface, color,
+                         (x1 + ux * position, y1 + uy * position),
+                         (x1 + ux * head, y1 + uy * head), width)
+        position = head + gap
+
+
 # ------------------------------------------------------------------ 按钮
 BUTTON_STYLES = {
     "primary": {"bg": (70, 130, 226), "bg_hover": (98, 160, 250), "edge": (126, 184, 255), "text": (255, 255, 255)},
@@ -517,3 +634,86 @@ class Button:
         else:
             draw_text(surface, self.label, self.rect.center,
                       size=self.size, color=text_color, bold=True, anchor="center")
+
+
+class IconButton:
+    """顶栏 / 工具栏上的小按钮：圆形或胶囊，可以只放图标，也可以图标 + 文字。
+
+    和上面 Button 的区别：
+
+    * **没有描边**，底色就是一整块圆角实心色，悬停时整体提亮。
+      描边按钮一排摆开像一排框子，参考图里那种干净的圆钮更好看，
+      也让画面上的"框"都留给真正需要强调的东西（比如悬停的那一格）。
+    * **开关类按钮**（toggle=True）用 self.on 表示当前是否开启，
+      开启时底色换成强调蓝，不用读文字就知道状态。
+
+    圆形按钮的 rect 请传正方形（边长 = 直径）。
+    """
+
+    def __init__(self, rect, icon=None, label="", on_click=None, shape="circle",
+                 size=15, toggle=False, gap=8, label_below=""):
+        self.rect = pygame.Rect(rect)
+        # label_below：画在圆钮**下面**的一行小字。
+        # 参考图底栏的"提示 / 辅助线"就是这么标的——圆钮里只有一个符号，
+        # 光靠符号玩家未必猜得出是什么，名字摆在按钮下方最省事。
+        self.label_below = label_below
+        self.icon = icon
+        self.label = label
+        self.on_click = on_click
+        self.shape = shape
+        self.size = size
+        self.toggle = toggle
+        self.on = False
+        self.gap = gap
+        self.enabled = True
+        self.hovered = False
+
+    def hit(self, pos):
+        return self.enabled and self.rect.collidepoint(pos)
+
+    def icon_size(self):
+        """圆形按钮里的图标直径；胶囊按钮固定 20。"""
+        if self.shape == "circle":
+            return self.rect.height * 0.46
+        return 20.0
+
+    def content_width(self):
+        """内容总宽度（图标 + 间距 + 文字），用于把内容整体居中。"""
+        width = 0.0
+        if self.icon:
+            width = self.icon_size()
+        if self.label:
+            if width:
+                width += self.gap
+            width += text_width(self.label, self.size, True)
+        return width
+
+    def draw(self, surface):
+        hovered = self.hovered and self.enabled
+        if self.toggle and self.on:
+            background = config.COLOR_TOOL_ON
+            foreground = (255, 255, 255)
+        else:
+            background = config.COLOR_TOOL_BTN_HOVER if hovered else config.COLOR_TOOL_BTN
+            foreground = config.COLOR_TEXT if self.enabled else config.COLOR_TEXT_FAINT
+
+        if self.shape == "circle":
+            pygame.draw.circle(surface, background, self.rect.center, self.rect.width // 2)
+        else:
+            draw_round_rect(surface, self.rect, background, radius=self.rect.height // 2)
+
+        x = self.rect.centerx - self.content_width() / 2.0
+        if self.icon:
+            size = self.icon_size()
+            ICONS[self.icon](surface, (x + size / 2.0, self.rect.centery), size, foreground)
+            x += size + (self.gap if self.label else 0)
+        if self.label:
+            draw_text(surface, self.label, (x, self.rect.centery), size=self.size,
+                      color=foreground, bold=True, anchor="midleft")
+
+        if self.label_below:
+            # 开关打开时，下方那行小字也跟着换成强调色，
+            # 这样"辅助线正在生效"是看得到的，不用去回忆自己点没点过。
+            color = config.COLOR_TOOL_ON if (self.toggle and self.on) else config.COLOR_TEXT_DIM
+            draw_text(surface, self.label_below, (self.rect.centerx, self.rect.bottom + 15),
+                      size=13, color=color, anchor="center")
