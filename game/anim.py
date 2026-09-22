@@ -17,21 +17,42 @@ import pygame
 from . import config, ui
 
 
+def fly_duration(travel, cell):
+    """按「每秒走多少格」把滑行弧长换算成动画时长，夹在上下限之间。
+
+    纯函数放在模块级而不是 FlyOut 里：app 与测试可以直接验证换算，
+    不用先造一支箭。cell 用格距归一（同样是 300px，小格距就该快些），
+    结果夹在 FLY_DURATION_MIN/MAX 里——短箭不快过 0.30s，长蛇形箭
+    也不拖过 0.80s。
+    """
+    cell = max(4.0, float(cell))
+    raw = float(travel) / (cell * config.FLY_SPEED_CPS)
+    return max(config.FLY_DURATION_MIN, min(config.FLY_DURATION_MAX, raw))
+
+
 class FlyOut:
     """整条箭头沿**自己的路径**滑出棋盘——贪吃蛇转弯的连续版。
 
-    想象把箭头当成一条蛇：箭头先钻出去，拐弯顺着身体一路传到尾巴，
+    想象把箭头当成一条绳子：箭头先钻出去，拐弯顺着身体一路传到尾巴，
     全程连续插值，不是一格一格地跳。每个折点沿路径前进的弧长相同，
     滑过箭头之后就沿着箭头方向直线走出视口（视口裁剪由 draw_play 负责）。
 
-    travel 是总滑行弧长（像素），由 app.fly_travel 按视口尺寸算好传进来。
+    travel 是总滑行弧长（像素），由 app.fly_travel 按视口尺寸算好传进来；
+    duration 通常由 fly_duration(travel, cell) 按弧长换算——固定时长时，
+    弧长几倍于短箭的 C/S 形蛇形箭只能靠翻倍速度飞完，观感是「射出去的
+    子弹」而不是「抽出去的绳子」，所以按格距速度换算并夹在上下限里。
     """
 
-    def __init__(self, piece, board_origin, cell, travel, duration=config.FLY_DURATION):
+    def __init__(self, piece, board_origin, cell, travel,
+                 duration=None):
         self.piece = piece
         self.board_origin = board_origin
         self.cell = cell
         self.travel = float(travel)
+        # duration 不给时按弧长换算（旧行为是固定 FLY_DURATION，
+        # 对占十几格的蛇形箭来说太快了）；想强制固定时长就显式传。
+        if duration is None:
+            duration = fly_duration(travel, cell)
         self.duration = duration
         self.elapsed = 0.0
         self.progress = 0.0

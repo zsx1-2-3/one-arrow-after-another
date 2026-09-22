@@ -1128,7 +1128,7 @@ class Game:
                      size=20, bold=True, color=config.COLOR_PANEL_TEXT)
 
         rules = (
-            "① 一支「箭」是一条占好几格的箭头，末端那个箭头就是它的朝向。",
+            "① 一支「箭」是一条占好几格的箭头，可能是直的也可能是弯的，末端箭头是它的朝向。",
             "② 点它身上任意一格：箭头前方是空的，整条箭头就飞出去。",
             "③ 前方还有别的箭头挡着，就飞不出去，并且失去",
             "④ 清空本关所有箭头即可通关；剩下的生命值越多，本关得分越高。",
@@ -1494,7 +1494,9 @@ class Game:
                                  0.55 + 0.45 * hover_pulse)
             self.draw_piece_ring(hovered, color, 1.0)
         if step is not None:
-            self.draw_tutorial_ring(self.cell_rect(step.row, step.col), pulse)
+            target = board.piece_at(step.row, step.col)
+            if target is not None:
+                self.draw_tutorial_ring(target, pulse)
         if self.hint_piece is not None:
             self.draw_hint_ring(self.hint_piece)
 
@@ -1618,14 +1620,17 @@ class Game:
         """0~1 的呼吸系数，用于教学关高亮的闪烁节奏。"""
         return 0.5 + 0.5 * math.sin(self.time * 4.0)
 
-    def draw_tutorial_ring(self, rect, pulse):
-        """教学关的目标格子高亮环，用正弦做呼吸效果，吸引注意力。"""
-        grow = max(3, int(self.cell * 0.16)) + int(pulse * 3)
-        ring = rect.inflate(grow * 2, grow * 2)
-        ui.draw_round_rect_alpha(self.screen, ring, config.COLOR_TUTORIAL,
-                                 int(120 + pulse * 110),
-                                 radius=config.CELL_RADIUS + grow,
-                                 width=max(2, int(self.cell * 0.12)))
+    def draw_tutorial_ring(self, piece, pulse):
+        """教学关目标箭头的呼吸高亮环——整支一起圈住，用正弦做呼吸效果。
+
+        早年只圈引导格那一格：箭头只有一两格时够用，但圈住的常常是箭身
+        而不是玩家要找的「那支」，弯箭头一出现更容易看漏整支的轮廓。
+        现在用 draw_piece_ring 逐格拼出整支的描边，宽度和透明度跟着
+        呼吸系数轻微起伏，视线自然被拽过去。
+        """
+        width = max(2, int(self.cell * 0.12)) + int(pulse * 2)
+        self.draw_piece_ring(piece, config.COLOR_TUTORIAL,
+                             (130 + pulse * 110) / 255.0, width=width)
 
     def draw_tutorial_bar(self):
         """教学关底部的讲解条：这一步该点哪里、为什么。"""
@@ -1642,8 +1647,22 @@ class Game:
                      (bar.right - 16, bar.centery), size=14,
                      color=config.COLOR_TUTORIAL, bold=True, anchor="midright")
 
+        # 进度点：一排小圆点标出走到哪一步，当前的更大更亮。
+        # 挂在条底部居中，文字区上移两像素给它让位——纯数字「3 / 5」
+        # 要换算一下才知道进度，圆点扫一眼就明白。
+        dot_y = bar.bottom - 7
+        spacing = 14
+        start_x = bar.centerx - (total - 1) * spacing // 2
+        for index in range(total):
+            current = index == self.tutorial_index
+            radius = 4 if current else 2
+            color = config.COLOR_TUTORIAL if current else config.COLOR_TUTORIAL_BAR_EDGE
+            pygame.draw.circle(self.screen, color, (start_x + index * spacing, dot_y),
+                               radius)
+
         # 右侧要留出「教学 x / y」的位置，左边留一点内边距
-        text_area = pygame.Rect(bar.x + 16, bar.y + 8, bar.width - 108, bar.height - 16)
+        text_area = pygame.Rect(bar.x + 16, bar.y + 6, bar.width - 108,
+                                bar.height - 20)
         ui.draw_paragraph(self.screen, step.text, text_area, size=14,
                           color=config.COLOR_TEXT, line_gap=2)
 

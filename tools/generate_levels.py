@@ -12,6 +12,16 @@
 
 另一条硬约束：**每支箭最后一段必须沿箭头方向**，否则画出来箭头会歪在拐角上
 （见 pieces.validate_layout）。
+
+形状（2026-09-22 第三版）：除了直条和 L 形，还支持两类**蛇形箭**——
+
+* ``C`` 形：两个以上**同号**拐弯（像字母 C / U，箭头回折半圈）；
+* ``S`` 形：三个以上**交替**拐弯（像字母 S / 5，蛇形蜿蜒）。
+
+由 generate 的 curve_prob / s_share 控制掺入比例：每支箭开工前先抽形状，
+抽中 C/S 的箭在 grow_backward 里按「下一个拐弯该同号还是反号」加权，
+place_one 再按形状达成度加分——没弯够数就罚，弯对了就奖。
+这两类箭占格多、射线关系绕，是后期关卡难度的主力来源。
 """
 
 import os
@@ -54,12 +64,74 @@ def empty_neighbours(grid, row, col, rows, cols):
     return count
 
 
-def grow_backward(grid, head, direction, rows, cols, rng, max_len, straight_bias=0.62):
+def _turn_signs(cells):
+    """路径每个拐弯的旋转符号（网格坐标系下的叉积，±1）。
+
+    直行不记；连续拐弯按出现顺序排列。C 形 = 全同号，S 形 = 全交替，
+    见 shape_kind。
+    """
+    signs = []
+    heading = None
+    for prev, cur in zip(cells, cells[1:]):
+        delta = (cur[0] - prev[0], cur[1] - prev[1])
+        if heading is not None and delta != heading:
+            cross = heading[0] * delta[1] - heading[1] * delta[0]
+            signs.append(1 if cross > 0 else -1)
+        heading = delta
+    return signs
+
+
+def shape_kind(cells):
+    """返回路径形状：'C'（≥2 个同号拐弯）、'S'（≥3 个交替拐弯）或 None。"""
+    signs = _turn_signs(cells)
+    if len(signs) >= 2 and all(sign == signs[0] for sign in signs):
+        return "C"
+    if len(signs) >= 3 and all(cur == -prev for prev, cur in zip(signs, signs[1:])):
+        return "S"
+    return None
+
+
+# C/S 形的打分：弯够数 +40 一档（多弯一个 +8），只有一两弯给安慰分。
+# 数值要压过「长度偏差 × 12」一两格的代价——不然生成器宁可放弃形状
+# 也要贴目标长度，curve_prob 就名存实亡了。
+SHAPE_BONUS = 40.0
+SHAPE_EXTRA_BEND = 8.0
+SHAPE_NEAR_MISS = 8.0
+
+
+def shape_bonus(cells, curve):
+    """一支候选路径对目标形状（'C'/'S'）的达成加分。"""
+    signs = _turn_signs(cells)
+    kind = shape_kind(cells)
+    if kind == curve:
+        return SHAPE_BONUS + SHAPE_EXTRA_BEND * (len(signs) - (2 if curve == "C" else 3))
+    if kind is not None:
+        # 要 C 来了个 S（或反之）也算半个蛇形，安慰分给足弯数
+        return SHAPE_NEAR_MISS + 0.5 * SHAPE_EXTRA_BEND * len(signs)
+    if signs:
+        return SHAPE_NEAR_MISS * 0.5
+    return 0.0
+
+
+def grow_backward(grid, head, direction, rows, cols, rng, max_len, straight_bias=0.62,
+                  curve=None, curve_boost=6.0):
     """从箭头位置往回长出一条路径，返回 tail -> head 顺序的格子元组。
 
     第一步必须沿 -direction，保证「最后一段和箭头方向一致」。
     之后可以在「继续直行」和「转向」里随机挑，直行概率高一点，
     这样出来的形状以长条 + 少量拐弯为主，接近参照画面里的箭头。
+
+    curve 给定（'C'/'S'）时按蛇形加权：每个拐弯有旋转符号（见 _turn_signs），
+    C 形要求下一个弯**和上一个同号**（一直往同一边卷），S 形要求**交替**
+    （往回弯，蛇形蜿蜒）。匹配预期符号的转向乘 curve_boost、不匹配除以
+    curve_boost；同时调用方应把 straight_bias 压低——直行太多的话
+    弯根本没机会出现，形状加权就是空转。
+
+    还有一处只为 C 形开的口子：普通路径每步只许走「箭轴反向」或「垂直」，
+    而「垂直→箭轴反向」这一拐的符号必然和「箭轴→垂直」相反（叉积算得出），
+    转弯永远正负交替——C 形在这种步进模型里**结构性不可能**。所以蛇形箭
+    额外允许沿 +direction 走：从垂线拐回箭轴时就能拐出同号弯，C 形才弯得出来。
+    沿 +direction 逼近箭头正前方的射线仍被 forbidden 拦着，不会指向自己。
 
     有一条硬禁区：**不许长到箭头正前方那条射线上去**。箭头是从箭头往回长的，
     绕一圈之后完全可能把尾巴甩到箭头前面，那就成了「箭头指着自己的箭身」——
@@ -69,11 +141,17 @@ def grow_backward(grid, head, direction, rows, cols, rng, max_len, straight_bias
     used = {head}
     cursor = head
     back = OPPOSITE[direction]
+    forward = DIRECTIONS[direction]
     forbidden = set(ray_cells(head, direction, rows, cols))
+    heading = back                      # 上一步的行进方向（第一步沿 back）
+    last_sign = None                    # 最近一个拐弯的符号，喂给 C/S 加权
 
     while len(cells) < max_len:
         if len(cells) == 1:
             options = [back]
+        elif curve is not None:
+            options = [back] + [DIRECTIONS[name]
+                                for name in PERPENDICULAR[direction]] + [forward]
         else:
             options = [back] + [DIRECTIONS[name] for name in PERPENDICULAR[direction]]
         choices = []
@@ -83,8 +161,16 @@ def grow_backward(grid, head, direction, rows, cols, rng, max_len, straight_bias
                 continue
             if grid[row][col] != -1 or (row, col) in used or (row, col) in forbidden:
                 continue
-            # 优先钻进「空格邻居少」的角落，能把零碎的空隙吃掉
+            # 优先钻进「空格邻居少」的角落，能把零碎的空隙吃掉。
+            # 直行按 delta == back 判是刻意的：拐弯后拐回箭轴也吃直行的高权重，
+            # 整体形状才以「长条 + 少量拐弯」为主（改成按 heading 判会让
+            # 所有箭都变弯弯绕绕，大盘铺满率直接塌掉——实测过，别改）。
             weight = straight_bias if delta == back else (1.0 - straight_bias) / 2.0
+            if delta != back and curve is not None and last_sign is not None:
+                cross = heading[0] * delta[1] - heading[1] * delta[0]
+                sign = 1 if cross > 0 else -1
+                want = last_sign if curve == "C" else -last_sign
+                weight *= curve_boost if sign == want else 1.0 / curve_boost
             weight *= 1.0 + 0.5 * (3 - empty_neighbours(grid, row, col, rows, cols))
             choices.append((weight, (row, col)))
         if not choices:
@@ -98,6 +184,11 @@ def grow_backward(grid, head, direction, rows, cols, rng, max_len, straight_bias
                 break
         else:
             cursor = choices[-1][1]
+        delta = (cursor[0] - cells[-1][0], cursor[1] - cells[-1][1])
+        if delta != heading:
+            cross = heading[0] * delta[1] - heading[1] * delta[0]
+            last_sign = 1 if cross > 0 else -1
+            heading = delta
         cells.append(cursor)
         used.add(cursor)
 
@@ -146,7 +237,7 @@ DIR_BALANCE_QUAD = 1.5
 
 
 def place_one(grid, rows, cols, rng, max_len, head_sample=36, path_tries=5,
-              ray_bias=3.0, target=None, dir_counts=None):
+              ray_bias=3.0, target=None, dir_counts=None, curve=None):
     """在当前盘面上找一支最能填满棋盘的箭放下；找不到返回 None。
 
     返回 (cells, direction)，cells 是 tail -> head 顺序。
@@ -160,6 +251,11 @@ def place_one(grid, rows, cols, rng, max_len, head_sample=36, path_tries=5,
 
     dir_counts 记录各方向已放几支（generate 负责维护），驱动朝向均衡罚分——
     见 DIR_BALANCE_LINEAR / DIR_BALANCE_QUAD 的说明。
+
+    curve 给定（'C'/'S'）时按蛇形箭养：直行概率压到 0.45 给拐弯让路，
+    路径多试两次（形状没那么容易弯出来），打分叠加 shape_bonus——
+    弯够了数 +40，压得住「离目标长度差一两格 × 12」的长度罚分，
+    否则生成器宁可放弃形状也要贴长度，curve_prob 就名存实亡了。
     """
     empty = [(r, c) for r in range(rows) for c in range(cols) if grid[r][c] == -1]
     if not empty:
@@ -178,11 +274,15 @@ def place_one(grid, rows, cols, rng, max_len, head_sample=36, path_tries=5,
     rng.shuffle(options)
     options.sort(key=lambda item: item[0])      # 越憋的位置越先填
     best = None
+    if curve is not None:
+        path_tries += 2
 
     for _, head, dirs in options[:head_sample]:
         for _ in range(path_tries):
             direction = rng.choice(dirs)
-            cells = grow_backward(grid, head, direction, rows, cols, rng, max_len)
+            cells = grow_backward(grid, head, direction, rows, cols, rng, max_len,
+                                  straight_bias=0.45 if curve else 0.62,
+                                  curve=curve)
             # 打分：贴住目标长度；奖励「把憋的位置吃掉了」；再偏向朝盘内；
             # 最后按朝向均衡罚分——同方向比最少方向多出几支就罚几份。
             # 偏差一格罚 12 分，压得过 ray_bias 的方向分——长度贴目标
@@ -203,6 +303,8 @@ def place_one(grid, rows, cols, rng, max_len, head_sample=36, path_tries=5,
                      + ray_bias * ray_length(head, direction, rows, cols)
                      + rng.random()
                      - balance_penalty)
+            if curve is not None:
+                score += shape_bonus(cells, curve)
             if best is None or score > best[0]:
                 best = (score, cells, direction)
     if best is None:
@@ -211,11 +313,16 @@ def place_one(grid, rows, cols, rng, max_len, head_sample=36, path_tries=5,
 
 
 def generate(rows, cols, seed=0, max_len=8, max_pieces=None, ray_bias=3.0,
-             mean_len=None):
+             mean_len=None, curve_prob=0.0, s_share=0.5):
     """生成一个布局，返回「放置顺序」下的箭列表（倒序即为一条通关顺序）。
 
     mean_len 给定时每支箭按 sample_target 抽目标长度（长短差距大）；
     不给时退回旧行为：每支都尽量长（等长盘）。
+
+    curve_prob 是每支箭抽中蛇形（C/S 形）的概率，s_share 是抽中时归为
+    S 形的比例（其余为 C 形）。蛇形箭占格多、目标长度有下限
+    （C 至少 6 格、S 至少 9 格，不然弯不出形状），抽中后把目标长度
+    抬到下限再交给 place_one。
     """
     rng = random.Random(seed)
     grid = [[-1] * cols for _ in range(rows)]
@@ -224,8 +331,14 @@ def generate(rows, cols, seed=0, max_len=8, max_pieces=None, ray_bias=3.0,
 
     while max_pieces is None or len(placed) < max_pieces:
         target = sample_target(rng, mean_len, max_len) if mean_len else None
+        curve = None
+        if rng.random() < curve_prob:
+            curve = "S" if rng.random() < s_share else "C"
+            floor = 9 if curve == "S" else 6
+            if target is not None:
+                target = max(target, min(floor, max_len))
         found = place_one(grid, rows, cols, rng, max_len, ray_bias=ray_bias,
-                          target=target, dir_counts=dir_counts)
+                          target=target, dir_counts=dir_counts, curve=curve)
         if found is None:
             break
         cells, direction = found

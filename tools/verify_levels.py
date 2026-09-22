@@ -140,10 +140,11 @@ def main():
         print("难度参考：棋盘逐关放大，最大的一关是第 %d 关 %s（%d 格）；"
               % (biggest + 1, report[biggest]["size"],
                  LEVELS[biggest].rows * LEVELS[biggest].cols))
-        print("          箭头逐关变多（%d → %d 支），开局可点的反而从 %d 支收到 %d 支。"
+        frees = [item["free"] for item in report]
+        print("          箭头逐关变多（%d → %d 支），开局可点数压在 %d~%d 支。"
               % (report[0]["arrows"], report[-1]["arrows"],
-                 report[0]["free"], report[-1]["free"]))
-        print("          出口更少、要扫的射线更长，这才是难度真正的来源。")
+                 min(frees), max(frees)))
+        print("          难度来自「要扫多少条射线」——棋盘更大、箭头更多，而不是封死出口。")
         print("生命值参考：按关卡序号给，第 1~4 关 3 颗心、第 5~9 关 4 颗心。")
         print("            棋盘越大步步越要算，后期多给一颗心；但整体比早年（4~7 颗）紧，")
         print("            每次点错都更疼。教学关不参与计分，单独给 %d 颗心，是个随便点的沙盒。"

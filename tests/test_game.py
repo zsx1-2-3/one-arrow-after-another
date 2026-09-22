@@ -23,6 +23,7 @@ T01~T06 的对应关系：
 """
 
 import json
+import math
 import os
 import random
 import shutil
@@ -37,9 +38,14 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
+# tools 目录没有 __init__.py，生成器是直接按目录导入的
+TOOLS = os.path.join(ROOT, "tools")
+if TOOLS not in sys.path:
+    sys.path.insert(0, TOOLS)
 
 import pygame  # noqa: E402
 
+import generate_levels as tools_generate  # noqa: E402
 from game import anim, bgfx, config, levels, pieces, scoring, ui  # noqa: E402
 from game.app import (DEMO_BLOCKED_CAPTION, DEMO_BLOCKED_SPECS,  # noqa: E402
                       DEMO_CLEAR_CAPTION, DEMO_CLEAR_SPECS, DEMO_COLORS,
@@ -667,9 +673,9 @@ class LevelBalanceTestCase(unittest.TestCase):
             self.assertEqual(scoring.max_score(level), level.stars * 300)
 
     def test_total_max_score_is_stable(self):
-        # 星级 1/1/1/2/3/4/4/4/5 × 300 = 7500。改关卡或调星级阈值时会立刻报警，
+        # 星级 1/1/2/2/3/4/4/5/5 × 300 = 8100。改关卡或调星级阈值时会立刻报警，
         # 提醒把 README / 博客 / 测试报告里的总分一起改掉。
-        self.assertEqual(scoring.total_max_score(LEVELS), 7500)
+        self.assertEqual(scoring.total_max_score(LEVELS), 8100)
 
     def test_level_rejects_invalid_specs_at_construction(self):
         """关卡数据写错时要在 import 阶段就炸，而不是等到玩家点进去。"""
@@ -703,6 +709,19 @@ class LevelBalanceTestCase(unittest.TestCase):
         """教学关必须把「能飞」和「被挡」两种情形各讲一遍。"""
         expects = {step.expect for step in TUTORIAL.steps}
         self.assertEqual(expects, {"fly", "blocked"})
+
+    def test_tutorial_introduces_curved_arrows(self):
+        """正式关里有 C/S 形大弯箭，教学关得先让玩家见过一支弯的。
+
+        光摆着不算数——引导步骤里必须真的点到它，否则玩家可能
+        根本没注意到箭头还可以是弯的。
+        """
+        curved_cells = {cell for piece in TUTORIAL.pieces
+                        if len(piece.cells) >= 4 for cell in piece.cells}
+        self.assertTrue(curved_cells, "教学关里应有一支带拐弯的箭头")
+        self.assertTrue(any((step.row, step.col) in curved_cells
+                            for step in TUTORIAL.steps),
+                        "弯箭头应出现在引导步骤里")
 
     def test_tutorial_is_solvable_and_small(self):
         self.assertIsNotNone(TUTORIAL.solution())
@@ -1212,6 +1231,120 @@ class AnimationTestCase(unittest.TestCase):
             while not effect.update(FRAME):
                 effect.draw(self.screen)
             effect.draw(self.screen)
+
+    def test_fly_duration_scales_with_travel(self):
+        """飞出时长按弧长换算：短箭不快过下限，长蛇形箭有上限拖底。"""
+        cell = 40
+        # 400px / (40 格距 × 26 格每秒) ≈ 0.38s，落在上下限之间按原值用
+        raw = anim.fly_duration(400, cell)
+        self.assertAlmostEqual(raw, 400 / (cell * config.FLY_SPEED_CPS))
+        # 短箭：换算值低于下限时被夹住
+        self.assertEqual(anim.fly_duration(100, cell), config.FLY_DURATION_MIN)
+        # 长蛇形箭：换算值高于上限时被夹住——否则固定时长下它只能超速飞完
+        self.assertEqual(anim.fly_duration(2000, cell), config.FLY_DURATION_MAX)
+        # 时长随弧长单调不减：绳子是匀速抽出去的，不是长的反而更快
+        self.assertGreaterEqual(anim.fly_duration(800, cell),
+                                anim.fly_duration(400, cell))
+
+    def test_fly_out_derives_duration_from_travel(self):
+        """FlyOut 不显式给时长时按弧长换算；显式给了就照用（兼容旧调用）。"""
+        piece = Piece(cells=((2, 2), (2, 3)), direction="right", color=PIECE_PALETTE[0])
+        effect = anim.FlyOut(piece, (0, 0), 40, 2000)
+        self.assertEqual(effect.duration, config.FLY_DURATION_MAX)
+        effect = anim.FlyOut(piece, (0, 0), 40, 2000, duration=0.38)
+        self.assertAlmostEqual(effect.duration, 0.38)
+
+
+# ---------------------------------------------------------------- 绳子渲染与蛇形箭
+class RopeCurveTestCase(unittest.TestCase):
+    """「绳子感」渲染与 C/S 形蛇形箭：拐角圆滑、形状判定、生成掺入。"""
+
+    @classmethod
+    def setUpClass(cls):
+        pygame.init()
+        pygame.display.set_mode((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
+        ui.clear_caches()
+
+    @classmethod
+    def tearDownClass(cls):
+        pygame.quit()
+
+    def test_rope_points_keeps_ends_and_rounds_corner(self):
+        """圆滑曲线首尾原样保留，拐角被削进内侧、圆滑起点切在 corner 处。"""
+        corner = 30.0
+        rope = ui.rope_points([(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)], corner)
+        self.assertEqual(rope[0], (0.0, 0.0))
+        self.assertEqual(rope[-1], (100.0, 100.0))
+        self.assertGreater(len(rope), 3, "拐角处应有贝塞尔采样点")
+        # 圆滑段从「沿第一段削进 corner 长」的点开始，剩余的直线部分
+        # 由 _paint_pipe 的画线覆盖，rope_points 不必往中段塞采样点
+        self.assertAlmostEqual(rope[1][0], 100.0 - corner)
+        self.assertAlmostEqual(rope[1][1], 0.0)
+        # 没有任何采样点贴在原拐角上——直角确实被圆滑掉了
+        nearest = min(math.hypot(x - 100.0, y) for x, y in rope)
+        self.assertGreater(nearest, 0.5)
+
+    def test_rope_points_clamps_to_short_segments(self):
+        """圆滑半径超过相邻段一半时被夹住，不会圆到相邻拐角里去。"""
+        rope = ui.rope_points([(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)], 100.0)
+        self.assertEqual(rope[0], (0.0, 0.0))
+        self.assertEqual(rope[-1], (10.0, 10.0))
+        # 削短量 = 10 的一半 = 5：圆滑段不该越过 x=5 / y=5 的中点
+        for x, y in rope:
+            self.assertLessEqual(x, 10.0 + 1e-6)
+            self.assertLessEqual(y, 10.0 + 1e-6)
+
+    def test_rope_points_passthrough_short_paths(self):
+        """两点（单段）或 corner=0 时原样返回——单格箭没必要也没有弧可圆。"""
+        points = [(0.0, 0.0), (40.0, 0.0)]
+        self.assertEqual(ui.rope_points(points, 30.0), points)
+        three = [(0.0, 0.0), (40.0, 0.0), (40.0, 40.0)]
+        self.assertEqual(ui.rope_points(three, 0.0), three)
+
+    def test_shape_kind_classifies_c_and_s(self):
+        """C 形 = ≥2 个同号拐弯，S 形 = ≥3 个交替拐弯，L/Z 形都不是。"""
+        # R2D2L2：右、下、左，两次同号拐弯——C/U 形回折
+        cells, _ = pieces.parse_piece("2,2 < R2D2L2")
+        self.assertEqual(tools_generate.shape_kind(cells), "C")
+        # R2D2R2D2：右、下、右、下，三次交替拐弯——S/5 形蜿蜒
+        cells, _ = pieces.parse_piece("2,2 v R2D2R2D2")
+        self.assertEqual(tools_generate.shape_kind(cells), "S")
+        # L 形（一弯）和 Z 形（两弯反号，如右、下、再右）不算蛇形
+        cells, _ = pieces.parse_piece("2,2 > R2D2")
+        self.assertIsNone(tools_generate.shape_kind(cells))
+        cells, _ = pieces.parse_piece("2,2 > R2D2R2")
+        self.assertIsNone(tools_generate.shape_kind(cells))
+
+    def test_generator_grows_serpentine_pieces(self):
+        """curve_prob 拉满时生成器真能长出 C 形和 S 形，且布局合法可解。"""
+        seen = {"C": 0, "S": 0}
+        for seed in range(3):
+            pieces_list = tools_generate.generate(
+                14, 10, seed=seed, max_len=12, max_pieces=24,
+                mean_len=5.8, ray_bias=3.0, curve_prob=1.0, s_share=0.5)
+            self.assertTrue(pieces_list)
+            self.assertIsNone(tools_generate.validate_layout_quiet(14, 10, pieces_list))
+            self.assertIsNotNone(solve_level(14, 10, pieces_list), "蛇形布局必须可解")
+            for piece in pieces_list:
+                kind = tools_generate.shape_kind(piece.cells)
+                if kind:
+                    seen[kind] += 1
+        self.assertGreater(seen["C"], 0, "强制蛇形却没长出 C 形")
+        self.assertGreater(seen["S"], 0, "强制蛇形却没长出 S 形")
+
+    def test_c_shaped_piece_renders_and_flies(self):
+        """C 形箭能渲染成贴图、能走飞出动画——绳子圆滑对蛇形路径同样成立。"""
+        cells, direction = pieces.parse_piece("2,2 < R2D2L2")
+        piece = Piece(cells=cells, direction=direction, color=PIECE_PALETTE[5])
+        image, _offset = ui.piece_surface(piece.cells, piece.direction,
+                                          piece.color, 40)
+        self.assertGreater(image.get_width(), 0)
+        effect = anim.FlyOut(piece, (0, 0), 40, 800)
+        effect.update(FRAME)
+        surface = pygame.Surface((400, 400))
+        effect.draw(surface)            # 中途帧也要能画，不能只在起点/终点
+        while not effect.update(FRAME):
+            effect.draw(surface)
 
 
 # ---------------------------------------------------------------- 背景

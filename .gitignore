@@ -23,6 +23,10 @@ desktop.ini
 *.log
 # 闯关进度存档（本机状态，不进仓库）
 progress.json
+# 选关 / 校验脚本的中间输出（重新跑一遍就有，不进仓库）
+build_levels_out.txt
+build_levels_report.txt
+build_verify_out.txt
 
 # ---------- 临时草稿 ----------
 _*.txt

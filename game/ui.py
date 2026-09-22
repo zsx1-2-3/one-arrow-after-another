@@ -335,20 +335,68 @@ DIR_VECTORS = {name: (d_col, d_row) for name, (d_row, d_col) in pieces.DIRECTION
 
 SUPERSAMPLE = 3                 # 先用 3 倍尺寸画，再缩回去——pygame 的直线没有抗锯齿
 
+BEZIER_STEPS = 6                # 每个拐角的贝塞尔采样段数——6 段肉眼已是圆弧
 
-def _paint_pipe(surface, points, direction, color, width, head_len, span):
+
+def rope_points(points, corner):
+    """把一条折线的每个拐角圆滑成弧，返回稠密采样点（首尾原样保留）。
+
+    这是「绳子感」的核心：硬直角的折线怎么看都是一条刚性蛇，而真实绳子
+    绕过障碍时拐弯是连续弯过去的。做法很朴素——在每个内部顶点处，沿进出
+    两个方向各削掉 corner 长度，中间用一段以顶点为控制点的二次贝塞尔补上；
+    削短量再被「相邻两段各一半」夹住，最短一格的折段也不会圆到相邻拐角去。
+
+    直线段不加密采样（本来就是直的），只有拐角处多出 BEZIER_STEPS 个点，
+    所以点数和开销都只随「拐弯数」增长，长直箭几乎不变慢。
+    """
+    if len(points) < 3 or corner <= 0:
+        return list(points)
+    rope = [points[0]]
+    for index in range(1, len(points) - 1):
+        prev_x, prev_y = points[index - 1]
+        x, y = points[index]
+        next_x, next_y = points[index + 1]
+        in_len = math.hypot(x - prev_x, y - prev_y)
+        out_len = math.hypot(next_x - x, next_y - y)
+        if in_len < 1e-6 or out_len < 1e-6:
+            continue                          # 重复点直接丢掉，别除零
+        cut = min(corner, in_len * 0.5, out_len * 0.5)
+        # 两个圆滑起点/终点之间的直线部分由「上个采样点连到下个采样点」的
+        # 画线自然覆盖，这里只需要往采样表里塞拐角那一段
+        start = (x - (x - prev_x) / in_len * cut, y - (y - prev_y) / in_len * cut)
+        end = (x + (next_x - x) / out_len * cut, y + (next_y - y) / out_len * cut)
+        for step in range(BEZIER_STEPS):
+            t = step / float(BEZIER_STEPS)
+            u = 1.0 - t
+            rope.append((u * u * start[0] + 2 * u * t * x + t * t * end[0],
+                         u * u * start[1] + 2 * u * t * y + t * t * end[1]))
+    rope.append(points[-1])
+    return rope
+
+
+def _paint_pipe(surface, points, direction, color, width, head_len, span,
+                corner=None):
     """在 surface 上把一条折线画成粗箭头，末端加一个箭头。
 
     points 是各格中心的屏幕坐标（tail -> head 顺序），三个尺寸参数都用像素。
     同一个函数会被调用两遍：先用「更粗 + 更暗」画一遍当描边，
     再用本色画一遍，叠出来就是一圈均匀的外轮廓。
+
+    corner 是拐角圆滑半径（像素），None 时按 PIECE_CORNER_RATIO 从 head_len
+    反推（head_len 恒等于 cell * PIECE_HEAD_RATIO，见两处调用方）。
+    画法是「沿圆滑曲线逐点画线 + 每个采样点补一个半宽圆头」：
+    圆头直径正好是线宽，叠出来就是一条处处圆滑的粗绳——拐角再也不是
+    硬直角，C/S 形的蛇形箭看上去才是软的。
     """
     radius = width / 2.0
-    if len(points) > 1:
-        for start, end in zip(points, points[1:]):
+    if corner is None:
+        corner = head_len * (config.PIECE_CORNER_RATIO / config.PIECE_HEAD_RATIO)
+    rope = rope_points(points, corner)
+    if len(rope) > 1:
+        for start, end in zip(rope, rope[1:]):
             pygame.draw.line(surface, color, start, end, int(round(width)))
-    # 每个拐点补一个圆：折线在拐角处会留一个缺口，圆头正好填平
-    for point in points:
+    # 每个采样点补一个圆头：线段接头、圆滑弧的内侧都靠它填平
+    for point in rope:
         pygame.draw.circle(surface, color,
                            (int(round(point[0])), int(round(point[1]))),
                            max(1, int(round(radius))))
@@ -409,12 +457,14 @@ def build_piece_surface(cells, direction, color, cell):
 
     # 第一遍：描边。比本色暗一档、粗一圈——同色系箭头挨在一起时靠它分得开。
     grow = 1.0 + config.PIECE_OUTLINE_RATIO
+    corner = cell * scale * config.PIECE_CORNER_RATIO
     _paint_pipe(big, points, direction,
                 mix_color(color, (0, 0, 0), config.PIECE_OUTLINE_DARKEN),
-                stroke * grow * scale, head_len * grow * scale, span * grow * scale)
+                stroke * grow * scale, head_len * grow * scale, span * grow * scale,
+                corner=corner)
     # 第二遍：本色
     _paint_pipe(big, points, direction, tuple(color),
-                stroke * scale, head_len * scale, span * scale)
+                stroke * scale, head_len * scale, span * scale, corner=corner)
 
     image = pygame.transform.smoothscale(big, (int(round(width)), int(round(height))))
     offset = (int(round(min_col * cell - pad)), int(round(min_row * cell - pad)))
@@ -493,6 +543,9 @@ def draw_piece_path(surface, origin, piece, cell, advance):
     相当于给动画开了 2×SSAA，运动边缘顺滑得多。只在飞出动画这一处这么干：
     静态棋子走贴图缓存（每关渲染一次，开销无所谓），这里每帧都要画，
     得控制住画布尺寸——先和视口裁剪框求交，箭头飞出视口的部分不画。
+
+    绳子感也在这条链路上：path_joints 给出的折点先经 rope_points 圆滑成
+    连续曲线再画，弯折顺着身体流过去时看到的是软绳绕弯，不是刚性折尺。
     """
     cell = max(4.0, float(cell))
     joints = [(origin[0] + x, origin[1] + y)
@@ -526,11 +579,13 @@ def draw_piece_path(surface, origin, piece, cell, advance):
 
     canvas = pygame.Surface((w * ss, h * ss), pygame.SRCALPHA)
     shifted = [((px - cx0) * ss, (py - cy0) * ss) for px, py in joints]
+    corner = cell * ss * config.PIECE_CORNER_RATIO
     _paint_pipe(canvas, shifted, piece.direction,
                 mix_color(color, (0, 0, 0), config.PIECE_OUTLINE_DARKEN),
-                stroke * grow * ss, head_len * grow * ss, span * grow * ss)
+                stroke * grow * ss, head_len * grow * ss, span * grow * ss,
+                corner=corner)
     _paint_pipe(canvas, shifted, piece.direction, tuple(color),
-                stroke * ss, head_len * ss, span * ss)
+                stroke * ss, head_len * ss, span * ss, corner=corner)
     surface.blit(pygame.transform.smoothscale(canvas, (w, h)), (cx0, cy0))
 
 
