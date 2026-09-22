@@ -132,16 +132,18 @@ def main():
         return 1
     print("校验结果：教学关 + 全部 %d 个编号关卡均可正常通关。" % len(report))
     if not args.markdown:
-        # 封顶关号从关卡数据里现算，不写死——插关删关的时候这种数字最容易过期，
-        # 而且过期了也不会报错，只会静静地印一句错的说明（之前就写过「第 7 关」）。
-        sizes = [max(level.rows, level.cols) for level in LEVELS]
-        max_side = max(sizes)
-        frozen = sizes.index(max_side) + 1
-        long_side = [level.rows for level in LEVELS]      # 竖屏棋盘取行数当长边
-        print("难度参考：棋盘尺寸逐关放大，第 %d 关到 %d×%d 就封顶，"
-              % (frozen, long_side[frozen - 1], LEVELS[frozen - 1].cols))
-        print("          之后同样的格子里塞进更多管道，靠铺满率继续加难；")
-        print("          开局可点的管道越少，越要在开局仔细扫射线。")
+        # 关号、尺寸、支数、可点数全部从关卡数据里现算，不写死——
+        # 插关删关的时候这种数字最容易过期，而且过期了也不会报错，
+        # 只会静静地印一句错的说明（之前就写过「棋盘尺寸到第 7 关封顶」）。
+        biggest = max(range(len(LEVELS)),
+                      key=lambda i: LEVELS[i].rows * LEVELS[i].cols)
+        print("难度参考：棋盘逐关放大，最大的一关是第 %d 关 %s（%d 格）；"
+              % (biggest + 1, report[biggest]["size"],
+                 LEVELS[biggest].rows * LEVELS[biggest].cols))
+        print("          管道逐关变多（%d → %d 支），开局可点的反而从 %d 支收到 %d 支。"
+              % (report[0]["arrows"], report[-1]["arrows"],
+                 report[0]["free"], report[-1]["free"]))
+        print("          出口更少、要扫的射线更长，这才是难度真正的来源。")
         print("生命值参考：按难度星级给，第 1 关 4 颗心、最后一关 7 颗心。")
         print("            关卡越难容错越高，一次手滑不至于被打回原点。")
         print("            教学关不参与计分，单独给 %d 颗心，是个随便点的沙盒。"
