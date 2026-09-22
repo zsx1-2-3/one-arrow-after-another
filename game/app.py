@@ -977,22 +977,28 @@ class Game:
         return result
 
     def fly_travel(self, piece):
-        """整支箭要飞多远才能完全离开棋盘视口。
+        """沿自身路径要滑多远（像素），整条管道才能完全离开棋盘视口。
 
-        从这支箭**最靠后的那条边**算起，而不是从箭头那一格算：
-        整条管道是一起平移的，尾巴没出去就不算飞完。
+        滑出时身体每一点沿路径前进相同的弧长；某点滑过箭头之后，
+        就沿着箭头方向直线走出视口。所以总弧长 =
+        尾巴到箭头的弧长 + 箭头中心到视口出口的距离 + 余量。
         """
+        body = (len(piece.cells) - 1) * self.cell
+        head_row, head_col = piece.head
+        dx, dy = ui.DIR_VECTORS[piece.direction]
+        head_x = self.board_rect.x + (head_col + 0.5) * self.cell
+        head_y = self.board_rect.y + (head_row + 0.5) * self.cell
         view = self.viewport_rect
         margin = self.cell * config.FLY_MARGIN_RATIO
-        rows = [row for row, _ in piece.cells]
-        cols = [col for _, col in piece.cells]
-        if piece.direction == "right":
-            return view.right + margin - (self.board_rect.x + min(cols) * self.cell)
-        if piece.direction == "left":
-            return (self.board_rect.x + (max(cols) + 1) * self.cell) - view.left + margin
-        if piece.direction == "down":
-            return view.bottom + margin - (self.board_rect.y + min(rows) * self.cell)
-        return (self.board_rect.y + (max(rows) + 1) * self.cell) - view.top + margin
+        if dx > 0:
+            extra = view.right - head_x
+        elif dx < 0:
+            extra = head_x - view.left
+        elif dy > 0:
+            extra = view.bottom - head_y
+        else:
+            extra = head_y - view.top
+        return body + max(self.cell, extra + margin)
 
     # ================================================================ 更新
     def update(self, dt):

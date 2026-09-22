@@ -435,6 +435,56 @@ def draw_piece(surface, origin, piece, cell, alpha=255, offset=(0, 0)):
     surface.blit(image, (int(origin[0] + dx + offset[0]), int(origin[1] + dy + offset[1])))
 
 
+def path_joints(piece, cell, advance):
+    """整条管道沿自身路径滑行 advance 像素后，各折点的棋盘局部坐标。
+
+    路径 = 各格中心连成的折线（tail -> head），过箭头后沿箭头方向直线延长。
+    每个折点原来的弧长是 k*cell（tail 为 0），整体加上 advance 再落回路径上——
+    这就是「贪吃蛇转弯」的连续版：弯折不是一格一格地跳，而是顺滑地往前流。
+    """
+    cell = max(4.0, float(cell))
+    pts = [((col + 0.5) * cell, (row + 0.5) * cell) for row, col in piece.cells]
+    if advance <= 0:
+        return pts
+    body = (len(pts) - 1) * cell
+    dx, dy = DIR_VECTORS[piece.direction]
+    hx, hy = pts[-1]
+    joints = []
+    for k in range(len(pts)):
+        arc = k * cell + advance
+        if arc < body:
+            i = int(arc // cell)
+            t = (arc - i * cell) / cell
+            x0, y0 = pts[i]
+            x1, y1 = pts[i + 1]
+            joints.append((x0 + (x1 - x0) * t, y0 + (y1 - y0) * t))
+        else:
+            joints.append((hx + dx * (arc - body), hy + dy * (arc - body)))
+    return joints
+
+
+def draw_piece_path(surface, origin, piece, cell, advance):
+    """飞出动画专用：管道沿自身路径滑出，弯折跟着往前流（不是整张平移）。
+
+    直接往 surface 上画两遍（描边 + 本色），不走贴图缓存——贴图是刚体，
+    表达不了「弯折在移动」。surface 已被调用方 set_clip 到棋盘视口，
+    滑出去的部分会被裁掉。
+    """
+    cell = max(4.0, float(cell))
+    joints = [(origin[0] + x, origin[1] + y)
+              for x, y in path_joints(piece, cell, advance)]
+    color = piece_color(piece)
+    stroke = cell * config.PIECE_STROKE_RATIO
+    head_len = cell * config.PIECE_HEAD_RATIO
+    span = cell * config.PIECE_HEAD_SPAN
+    grow = 1.0 + config.PIECE_OUTLINE_RATIO
+    _paint_pipe(surface, joints, piece.direction,
+                mix_color(color, (0, 0, 0), config.PIECE_OUTLINE_DARKEN),
+                stroke * grow, head_len * grow, span * grow)
+    _paint_pipe(surface, joints, piece.direction, tuple(color),
+                stroke, head_len, span)
+
+
 # ------------------------------------------------------------------ 光晕
 _glow_cache = {}
 

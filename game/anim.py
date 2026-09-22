@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""动画效果：整支箭飞出、撞击抖动、飘字提示。
+"""动画效果：管道滑出、撞击抖动、飘字提示。
 
 每个动画对象都提供统一的接口：
     update(dt) -> bool   返回 True 表示动画播完，可以从列表里移除
     draw(surface)        把自己画到屏幕上
 
-注意这里的单位变了：从「一格里的一个箭头」变成了**一整支箭**（占多格的管道）。
-所以飞出去是整条管道一起平移，撞击也是整条管道一起抖——
-这也正是参照画面里的表现：点一下，那条管子整体滑出去。
+注意这里的单位：从「一格里的一个箭头」变成了**一整支箭**（占多格的管道）。
+滑出是沿管道自身的折线路径走的——箭头先钻出去，弯折顺着身体流到尾巴；
+撞击则是整条管道朝箭头方向冲一下再弹回。
 """
 
 import math
@@ -18,18 +18,19 @@ from . import config, ui
 
 
 class FlyOut:
-    """一整支箭沿着自己的方向飞出棋盘。
+    """整条管道沿**自己的路径**滑出棋盘——贪吃蛇转弯的连续版。
 
-    飞出距离由 app 按棋盘尺寸算好传进来：**从箭头的末端格子**算起，
-    所以不管这条管道有多长、拐了多少弯，它都是"从箭头那一头先出去"。
+    想象把管道当成一条蛇：箭头先钻出去，拐弯顺着身体一路传到尾巴，
+    全程连续插值，不是一格一格地跳。每个折点沿路径前进的弧长相同，
+    滑过箭头之后就沿着箭头方向直线走出视口（视口裁剪由 draw_play 负责）。
+
+    travel 是总滑行弧长（像素），由 app.fly_travel 按视口尺寸算好传进来。
     """
 
     def __init__(self, piece, board_origin, cell, travel, duration=config.FLY_DURATION):
         self.piece = piece
         self.board_origin = board_origin
         self.cell = cell
-        dx, dy = ui.DIR_VECTORS[piece.direction]
-        self.vector = pygame.Vector2(dx, dy)
         self.travel = float(travel)
         self.duration = duration
         self.elapsed = 0.0
@@ -41,20 +42,17 @@ class FlyOut:
         return self.progress >= 1.0
 
     @property
-    def offset(self):
+    def advance(self):
         # 用 1.7 次方做缓入，看起来像被"抽"出去一样越来越快
-        eased = self.progress ** 1.7
-        return self.vector * (self.travel * eased)
+        return self.travel * (self.progress ** 1.7)
 
-    @property
-    def alpha(self):
-        if self.progress < 0.72:
-            return 255
-        return int(255 * (1.0 - (self.progress - 0.72) / 0.28))
+    def joints(self):
+        """当前帧各折点的棋盘局部坐标（tail -> head），测试盯几何用。"""
+        return ui.path_joints(self.piece, self.cell, self.advance)
 
     def draw(self, surface):
-        ui.draw_piece(surface, self.board_origin, self.piece, self.cell,
-                      alpha=self.alpha, offset=self.offset)
+        ui.draw_piece_path(surface, self.board_origin, self.piece, self.cell,
+                           self.advance)
 
 
 class Impact:

@@ -1088,13 +1088,14 @@ class AnimationTestCase(unittest.TestCase):
     def test_fly_out_finishes_and_keeps_moving_away(self):
         piece = Piece(cells=((2, 2), (2, 3)), direction="right", color=PIECE_PALETTE[0])
         effect = anim.FlyOut(piece, (0, 0), 40, 400)
-        self.assertEqual(tuple(effect.offset), (0, 0))
+        start = effect.joints()[-1]
         effect.update(FRAME)
-        self.assertGreater(effect.offset[0], 0)        # 朝右飞
-        self.assertEqual(effect.offset[1], 0)
+        moved = effect.joints()[-1]
+        self.assertGreater(moved[0], start[0])         # 箭头朝右钻出去
+        self.assertEqual(moved[1], start[1])           # 这条路没有上下分量
         frames = self.drain(effect)
         self.assertGreater(frames, 5)
-        self.assertEqual(effect.alpha, 0)
+        self.assertAlmostEqual(effect.advance, 400)    # 滑满全程
 
     def test_fly_out_respects_direction(self):
         for direction, sign, axis in (("right", 1, 0), ("left", -1, 0),
@@ -1102,16 +1103,36 @@ class AnimationTestCase(unittest.TestCase):
             piece = Piece(cells=((1, 1),), direction=direction, color=PIECE_PALETTE[1])
             effect = anim.FlyOut(piece, (0, 0), 40, 300)
             effect.update(FRAME)
-            self.assertGreater(sign * effect.offset[axis], 0,
-                               "%s 方向飞反了：%r" % (direction, tuple(effect.offset)))
+            head = effect.joints()[-1]
+            rest = (1 + 0.5) * 40                       # 单格中心的初始坐标
+            self.assertGreater(sign * (head[axis] - rest), 0,
+                               "%s 方向飞反了：%r" % (direction, head))
 
-    def test_fly_out_alpha_stays_opaque_early_then_fades(self):
-        piece = Piece(cells=((1, 1),), direction="up", color=PIECE_PALETTE[1])
-        effect = anim.FlyOut(piece, (0, 0), 40, 300)
-        self.assertEqual(effect.alpha, 255)
-        for _ in range(30):
-            effect.update(FRAME)
-        self.assertLess(effect.alpha, 255)
+    def test_fly_out_tail_follows_the_bend(self):
+        """L 形管道：尾巴没过弯时沿第一段滑，过弯后沿箭头方向直线出视口。
+
+        弯折是「流」过去的：每个折点沿路径走的弧长都相同，所以任何时刻
+        尾巴的位置都应该正好落在原始路径上弧长 = advance 的那个点。
+        """
+        piece = Piece(cells=((2, 2), (2, 3), (3, 3)), direction="right",
+                      color=PIECE_PALETTE[4])
+        cell = 40
+        # 走了半格：还在第一段（向右）上，没有上下分量
+        tail = ui.path_joints(piece, cell, 20)[0]
+        self.assertAlmostEqual(tail[0], (2 + 0.5) * cell + 20)
+        self.assertAlmostEqual(tail[1], (2 + 0.5) * cell)
+        # 一格半：尾巴已经流过拐弯，转到竖直段上了
+        tail = ui.path_joints(piece, cell, 60)[0]
+        self.assertAlmostEqual(tail[0], (3 + 0.5) * cell)
+        self.assertAlmostEqual(tail[1], (2 + 0.5) * cell + 20)
+        # 两格：尾巴正好到箭头原来的位置
+        tail = ui.path_joints(piece, cell, 2 * cell)[0]
+        self.assertAlmostEqual(tail[0], (3 + 0.5) * cell)
+        self.assertAlmostEqual(tail[1], (3 + 0.5) * cell)
+        # 再往前就是沿箭头方向的直线延长
+        tail = ui.path_joints(piece, cell, 2 * cell + 25)[0]
+        self.assertAlmostEqual(tail[0], (3 + 0.5) * cell + 25)
+        self.assertAlmostEqual(tail[1], (3 + 0.5) * cell)
 
     def test_impact_fades_out_and_ends(self):
         piece = Piece(cells=((1, 1), (1, 2)), direction="up", color=PIECE_PALETTE[2])
